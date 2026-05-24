@@ -6,7 +6,7 @@ import {
   WORK_TYPES,
   TRANSACTION_TYPES,
 } from "../constants";
-import { formatMonth } from "./format";
+import { formatMonth, formatDate, formatCurrency } from "./format";
 
 // Turn a stored work_type key into nice text. Custom types pass through as-is.
 export function prettyWorkType(workType) {
@@ -46,28 +46,71 @@ export function calcWork(workType, inputs) {
   return { amount, details: { manual: true } };
 }
 
-// Worker balance = total work earned − total paid − total advance.
-// A positive balance means we still owe the worker money.
+// Worker balance: how much advance worker still owes owner (to pay back)
 export function calcBalance(transactions = []) {
   let work = 0;
+  let salary = 0;
   let payment = 0;
-  let advance = 0;
+  let advanceGiven = 0;
+  let advanceReduced = 0;
+  let bonus = 0;
 
   for (const t of transactions) {
     if (t.type === TRANSACTION_TYPES.WORK)
       work += Number(t.calculated_amount) || 0;
+    else if (t.type === "salary") {
+      salary += Number(t.amount) || 0;
+      payment += Number(t.amount) || 0;
+    }
+    else if (t.type === "bonus") {
+      bonus += Number(t.amount) || 0;
+      payment += Number(t.amount) || 0;
+    }
+    else if (t.type === "increment") {
+      // Increment affects payment indirectly (new salary)
+      payment += Number(t.calculated_amount) || 0;
+    }
     else if (t.type === TRANSACTION_TYPES.PAYMENT)
       payment += Number(t.amount) || 0;
     else if (t.type === TRANSACTION_TYPES.ADVANCE)
-      advance += Number(t.amount) || 0;
+      advanceGiven += Number(t.amount) || 0;
+    // Track advance that was reduced from salary
+    if (t.type === "salary" && t.work_details?.advance_reduced)
+      advanceReduced += Number(t.work_details.advance_reduced) || 0;
   }
 
-  return { work, payment, advance, balance: work - payment - advance };
+  // Balance = how much worker still owes (advance given - advance already covered)
+  const balance = Math.max(0, advanceGiven - advanceReduced);
+
+  return { work, salary, bonus, payment, advance: balance, balance };
 }
 
 // Turns a transaction's stored details into a readable line for the table.
 export function describeWork(tx) {
   const d = tx.work_details || {};
+
+  // Salary transaction
+  if (tx.type === "salary") {
+    const date = d.salary_date ? formatDate(d.salary_date) : "This month";
+    let base = `Salary · ${date}`;
+    if (d.leave_days) base += ` · ${d.leave_days} day leave`;
+    if (d.advance_reduced) base += ` · advance reduced`;
+    return base;
+  }
+
+  // Bonus transaction
+  if (tx.type === "bonus") {
+    const date = d.bonus_date ? formatDate(d.bonus_date) : "This month";
+    return `Bonus · ${date}`;
+  }
+
+  // Increment transaction
+  if (tx.type === "increment") {
+    const oldSal = d.old_salary ? formatCurrency(d.old_salary) : "-";
+    const newSal = d.new_salary ? formatCurrency(d.new_salary) : "-";
+    return `Increment · ${oldSal} → ${newSal}`;
+  }
+
   if (d.salary_month) {
     const base = `Salary · ${formatMonth(d.salary_month)}`;
     return d.leave_days ? `${base} · ${d.leave_days} day leave` : base;
