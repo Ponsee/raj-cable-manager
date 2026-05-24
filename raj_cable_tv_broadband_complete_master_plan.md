@@ -1003,3 +1003,135 @@ This architecture is designed to:
 
 ---
 
+
+---
+
+# 📝 IMPLEMENTATION UPDATES (May 2026)
+
+---
+
+# 👤 Worker Details Page - Updated
+
+### Transaction Types
+
+#### Salary Workers
+
+| Type | Meaning |
+|---|---|
+| advance | Money given before salary day |
+| salary | Monthly salary payment |
+| bonus | Additional bonus |
+| increment | Salary increase |
+
+#### Contract Workers
+
+| Type | Meaning |
+|---|---|
+| advance | Money given before work |
+| work | Work entry (splicing, wire laying, custom) |
+| payment | Payment for work done |
+
+---
+
+# 💰 Salary Worker Transaction Modal
+
+## Employee Options
+
+For employees, the form shows only 2 options:
+- **Advance** - Money given before salary day
+- **Salary** - Monthly salary payment
+
+### Salary Transaction Fields
+
+| Field | Description |
+|---|---|
+| Date | Salary payment date |
+| Advance to reduce | Read-only, shows current advance balance |
+| Leave days (deducted) | Days of leave taken |
+| Note | Auto-generated |
+
+### Net Salary Calculation
+
+```
+Net Salary = Monthly Salary - (Leave Days × Daily Rate) - Advance to Reduce
+```
+
+### Auto Note Generation
+
+Example: "May 2026, 2 day leave, Advance reduced: ₹5,000"
+
+---
+
+# 💰 Bonus & Increment
+
+## Bonus Transaction
+
+| Field | Description |
+|---|---|
+| Date | Bonus payment date |
+| Bonus Amount | Bonus amount |
+
+## Increment Transaction
+
+Increases the worker's base salary. Tracked via separate modal (not in Add Transaction form).
+
+Shows difference between old salary and new salary.
+
+---
+
+# 📊 Worker Summary Cards
+
+## Salary Worker Cards (4 cards)
+
+| Card | Icon | Click Action |
+|---|---|---|
+| Total Salary | 💰 | Opens Salary History modal |
+| Increment | 📈 | Opens Increment modal with "+" button |
+| Total Advance | 💵 | Opens Advance History modal |
+| Balance Due | ⚖️ | Opens Balance Reduction modal |
+
+## Contract Worker Cards (4 cards)
+
+| Card | Icon | Click Action |
+|---|---|---|
+| Total Work | 🛠️ | - |
+| Total Paid | ✅ | - |
+| Total Advance | 💵 | Opens Advance History modal |
+| Balance Due | ⚖️ | Opens Balance Reduction modal |
+
+---
+
+# 📋 History Modals
+
+All modals include date range pickers:
+- Advance History
+- Salary History
+- Bonus History
+- Balance Reduction History
+
+---
+
+# 🔑 Worker Balance Formula (Updated)
+
+## Salary Workers
+
+```
+Balance Due = Total Advance Given - Total Advance Reduced by Salary
+```
+
+The balance represents how much the worker still owes the owner.
+
+## Contract Workers
+
+```
+Balance = Total Work - Total Paid - Total Advance
+```
+
+---
+
+# 🧩 StatCard Component
+
+Updated to support:
+- `onClick` - Click handler for the card
+- `children` - For adding buttons inside the card
+
