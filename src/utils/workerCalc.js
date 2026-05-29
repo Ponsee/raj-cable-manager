@@ -4,6 +4,7 @@ import {
   SPLICING_RATES,
   WIRE_LAYING_RATE_PER_KM,
   WORK_TYPES,
+  WORKER_TYPES,
   TRANSACTION_TYPES,
 } from "../constants";
 import { formatMonth, formatDate, formatCurrency } from "./format";
@@ -15,48 +16,55 @@ export function prettyWorkType(workType) {
   return workType || "";
 }
 
-// Splicing: up to 4 joints -> ₹100 each, 5 or more -> ₹90 each.
-export function calcSplicing(joints) {
+// Splicing: up to N joints -> low rate each, more than N -> high rate each.
+// `pricing` (per-worker) overrides the global defaults when present.
+export function calcSplicing(joints, pricing) {
   const n = Number(joints) || 0;
-  const rate =
-    n <= SPLICING_RATES.LOW_JOINT_LIMIT
-      ? SPLICING_RATES.LOW_RATE
-      : SPLICING_RATES.HIGH_RATE;
+  const limit = Number(pricing?.low_joint_limit) || SPLICING_RATES.LOW_JOINT_LIMIT;
+  const lowRate = Number(pricing?.low_rate) || SPLICING_RATES.LOW_RATE;
+  const highRate = Number(pricing?.high_rate) || SPLICING_RATES.HIGH_RATE;
+  const rate = n <= limit ? lowRate : highRate;
   return n * rate;
 }
 
-// Wire laying: ₹3500 per km.
-export function calcWireLaying(km) {
-  return (Number(km) || 0) * WIRE_LAYING_RATE_PER_KM;
+// Wire laying: rate per km (per-worker `pricing` overrides the default).
+export function calcWireLaying(km, pricing) {
+  const rate = Number(pricing?.rate_per_km) || WIRE_LAYING_RATE_PER_KM;
+  return (Number(km) || 0) * rate;
 }
 
 // Given a work type + the numbers entered, return the amount earned and the
 // details we store (so history shows "8 joints" or "2 km" later).
-export function calcWork(workType, inputs) {
+export function calcWork(workType, inputs, pricing) {
   if (workType === WORK_TYPES.SPLICING) {
     const joints = Number(inputs.joints) || 0;
-    return { amount: calcSplicing(joints), details: { joints } };
+    return { amount: calcSplicing(joints, pricing), details: { joints } };
   }
   if (workType === WORK_TYPES.WIRE_LAYING) {
     const km = Number(inputs.km) || 0;
-    return { amount: calcWireLaying(km), details: { km } };
+    return { amount: calcWireLaying(km, pricing), details: { km } };
   }
   // "other" (or salary worker) -> amount typed in directly.
   const amount = Number(inputs.amount) || 0;
   return { amount, details: { manual: true } };
 }
 
-// Worker balance: how much advance worker still owes owner (to pay back)
-export function calcBalance(transactions = []) {
+// Worker balance. The meaning depends on the worker type:
+//  - Contract worker: work is paid when recorded (optionally settling advance),
+//    so Balance Due = advance still outstanding (given − reduced).
+//  - Employee: Balance Due = advances still outstanding (to settle from salary).
+export function calcBalance(transactions = [], workerType) {
   let work = 0;
   let salary = 0;
   let payment = 0;
   let advanceGiven = 0;
   let advanceReduced = 0;
   let bonus = 0;
+  let expense = 0; // petrol / other money given — NOT deducted from pay
 
   for (const t of transactions) {
-    if (t.type === TRANSACTION_TYPES.WORK)
+    if (t.type === "expense") expense += Number(t.amount) || 0;
+    else if (t.type === TRANSACTION_TYPES.WORK)
       work += Number(t.calculated_amount) || 0;
     else if (t.type === "salary") {
       salary += Number(t.amount) || 0;
@@ -74,15 +82,22 @@ export function calcBalance(transactions = []) {
       payment += Number(t.amount) || 0;
     else if (t.type === TRANSACTION_TYPES.ADVANCE)
       advanceGiven += Number(t.amount) || 0;
-    // Track advance that was reduced from salary
-    if (t.type === "salary" && t.work_details?.advance_reduced)
+    // Track advance reduced from a salary OR a work payout
+    if (t.work_details?.advance_reduced)
       advanceReduced += Number(t.work_details.advance_reduced) || 0;
   }
 
-  // Balance = how much worker still owes (advance given - advance already covered)
-  const balance = Math.max(0, advanceGiven - advanceReduced);
+  // Contract worker: work is settled at entry, so both the advance balance and
+  // Balance Due are the advance still outstanding (given − reduced). After a work
+  // payout reduces an advance, Total Advance drops too.
+  if (workerType === WORKER_TYPES.CONTRACT) {
+    const balance = Math.max(0, advanceGiven - advanceReduced);
+    return { work, salary, bonus, payment, expense, advance: balance, balance };
+  }
 
-  return { work, salary, bonus, payment, advance: balance, balance };
+  // Employee: advance still outstanding (advance given − already covered).
+  const balance = Math.max(0, advanceGiven - advanceReduced);
+  return { work, salary, bonus, payment, expense, advance: balance, balance };
 }
 
 // Turns a transaction's stored details into a readable line for the table.

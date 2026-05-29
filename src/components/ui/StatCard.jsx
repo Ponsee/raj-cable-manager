@@ -6,6 +6,8 @@ export default function StatCard({ label, value, icon, accent = "indigo", onClic
     blue: "bg-blue-100 text-blue-700",
     amber: "bg-amber-100 text-amber-700",
     indigo: "bg-indigo-100 text-indigo-700",
+    purple: "bg-purple-100 text-purple-700",
+    orange: "bg-orange-100 text-orange-700",
   };
 
   const isClickable = !!onClick;

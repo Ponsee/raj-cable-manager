@@ -4,24 +4,22 @@ import PageHeader from "../components/ui/PageHeader";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import StatCard from "../components/ui/StatCard";
+import WorkerForm, {
+  DEFAULT_PRICING_FORM,
+  buildPricing,
+  pricingToFormFields,
+} from "../components/forms/WorkerForm";
 import {
   getWorker,
   getWorkerTransactions,
   addWorkerTransaction,
-  getWorkTypeSuggestions,
   updateWorker,
 } from "../services/workersService";
-import {
-  calcBalance,
-  calcSplicing,
-  calcWireLaying,
-  describeWork,
-} from "../utils/workerCalc";
+import { calcBalance, calcSplicing, describeWork } from "../utils/workerCalc";
 import {
   TRANSACTION_TYPES,
   WORKER_TYPES,
   WORK_TYPES,
-  WORKER_TYPE_LABELS,
 } from "../constants";
 import { formatCurrency, formatDate, ordinal } from "../utils/format";
 
@@ -31,19 +29,19 @@ const inputClass =
 // Date Range Picker - standalone component
 function DateRangePicker({ start, end, onChange }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
       <input
         type="date"
         value={start}
-        onChange={(e) => onChange({ ...{ start: e.target.value }, end })}
-        className="rounded border border-gray-300 px-2 py-1 text-sm"
+        onChange={(e) => onChange({ start: e.target.value, end })}
+        className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm sm:flex-none"
       />
       <span className="text-gray-500">to</span>
       <input
         type="date"
         value={end}
-        onChange={(e) => onChange({ start, ...{ end: e.target.value } })}
-        className="rounded border border-gray-300 px-2 py-1 text-sm"
+        onChange={(e) => onChange({ start, end: e.target.value })}
+        className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm sm:flex-none"
       />
     </div>
   );
@@ -56,6 +54,17 @@ const typeBadge = {
   salary: "bg-green-100 text-green-700",
   bonus: "bg-purple-100 text-purple-700",
   increment: "bg-indigo-100 text-indigo-700",
+  expense: "bg-orange-100 text-orange-700",
+};
+
+// Purpose options for an Expense entry (petrol / other money given).
+const EXPENSE_PURPOSES = ["Petrol", "Food", "Travel", "Material", "Other"];
+
+// Shared "Expense" type info (used by both employee and contractor).
+const EXPENSE_TYPE_INFO = {
+  icon: "⛽",
+  label: "Expense",
+  help: "Petrol / other money given for work. NOT deducted from pay.",
 };
 
 // For salary workers, 3 options: Advance, Salary, Bonus
@@ -75,27 +84,49 @@ function typeInfoFor(workerType) {
       bonus: {
         icon: "🎁",
         label: "Bonus",
-        help: "Additional bonus payment.",
+        help: "Extra one-time payment on top of salary (festival, reward, etc.).",
       },
+      increment: {
+        icon: "📈",
+        label: "Increment",
+        help: "Give a raise. Updates the monthly salary from now on.",
+      },
+      expense: EXPENSE_TYPE_INFO,
     };
   }
   return {
     work: {
       icon: "🛠️",
       label: "Work",
-      help: "Worker did a job and earned money. Balance goes up.",
+      help: "Splicing done (per joint). Advance can be reduced from the payout.",
     },
     advance: {
       icon: "💵",
       label: "Advance",
-      help: "Money given early, before payday. Balance goes down.",
+      help: "Money given early. Reduce it later when recording work.",
     },
-    payment: {
-      icon: "✅",
-      label: "Payment",
-      help: "You paid the worker their dues. Balance goes down.",
+    bonus: {
+      icon: "🎁",
+      label: "Bonus",
+      help: "Extra one-time payment on top of work.",
     },
+    expense: EXPENSE_TYPE_INFO,
   };
+}
+
+// Short, plain-English line of a contract worker's rates (for the profile).
+function pricingSummary(worker) {
+  const p = worker.pricing || {};
+  if (worker.work_type === WORK_TYPES.SPLICING) {
+    const limit = p.low_joint_limit ?? 4;
+    const low = p.low_rate ?? 100;
+    const high = p.high_rate ?? 90;
+    return `Up to ${limit} joints: ${formatCurrency(low)} per joint. More than ${limit} joints: ${formatCurrency(high)} per joint.`;
+  }
+  if (worker.work_type === WORK_TYPES.WIRE_LAYING) {
+    return `${formatCurrency(p.rate_per_km ?? 3500)} per km`;
+  }
+  return "Entered for each work entry";
 }
 
 export default function WorkerDetails() {
@@ -107,9 +138,10 @@ export default function WorkerDetails() {
   const [editWorkerModalOpen, setEditWorkerModalOpen] = useState(false);
   const [advanceModalOpen, setAdvanceModalOpen] = useState(false);
   const [salaryModalOpen, setSalaryModalOpen] = useState(false);
-  const [incrementModalOpen, setIncrementModalOpen] = useState(false);
+  const [incrementModalOpen, setIncrementModalOpen] = useState(false); // increment history
   const [bonusModalOpen, setBonusModalOpen] = useState(false);
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
+  const [expenseModalOpen, setExpenseModalOpen] = useState(false);
   const [dateFilter, setDateFilter] = useState({
     start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0],
     end: new Date().toISOString().split("T")[0],
@@ -145,7 +177,7 @@ export default function WorkerDetails() {
     );
   }
 
-  const summary = calcBalance(txs);
+  const summary = calcBalance(txs, worker.type);
   const info = typeInfoFor(worker.type);
   const isSalary = worker.type === WORKER_TYPES.SALARY;
 
@@ -219,6 +251,9 @@ export default function WorkerDetails() {
                 value={`${ordinal(worker.salary_pay_day)} of every month`}
               />
             )}
+            {!isSalary && (
+              <Row label="Pricing" value={pricingSummary(worker)} />
+            )}
           </dl>
         </div>
 
@@ -233,23 +268,19 @@ export default function WorkerDetails() {
                 onClick={() => setSalaryModalOpen(true)}
               />
               <StatCard
+                label="Total Bonus"
+                value={formatCurrency(summary.bonus)}
+                icon="🎁"
+                accent="purple"
+                onClick={() => setBonusModalOpen(true)}
+              />
+              <StatCard
                 label="Increment"
                 value={incrementDiff > 0 ? `+${formatCurrency(incrementDiff)}` : "-"}
                 icon="📈"
                 accent="indigo"
-              >
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIncrementModalOpen(true);
-                  }}
-                  className="absolute right-4 top-4 flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700"
-                  title="Add Increment"
-                >
-                  +
-                </button>
-              </StatCard>
+                onClick={() => setIncrementModalOpen(true)}
+              />
               <StatCard
                 label="Total Advance"
                 value={formatCurrency(summary.advance)}
@@ -263,6 +294,13 @@ export default function WorkerDetails() {
                 icon="⚖️"
                 accent={summary.balance > 0 ? "amber" : "indigo"}
                 onClick={() => setBalanceModalOpen(true)}
+              />
+              <StatCard
+                label="Total Expense"
+                value={formatCurrency(summary.expense)}
+                icon="⛽"
+                accent="orange"
+                onClick={() => setExpenseModalOpen(true)}
               />
             </>
           ) : (
@@ -274,10 +312,11 @@ export default function WorkerDetails() {
                 accent="green"
               />
               <StatCard
-                label="Total Paid"
-                value={formatCurrency(summary.payment)}
-                icon="✅"
-                accent="blue"
+                label="Total Bonus"
+                value={formatCurrency(summary.bonus)}
+                icon="🎁"
+                accent="purple"
+                onClick={() => setBonusModalOpen(true)}
               />
               <StatCard
                 label="Total Advance"
@@ -293,6 +332,13 @@ export default function WorkerDetails() {
                 accent={summary.balance > 0 ? "amber" : "indigo"}
                 onClick={() => setBalanceModalOpen(true)}
               />
+              <StatCard
+                label="Total Expense"
+                value={formatCurrency(summary.expense)}
+                icon="⛽"
+                accent="orange"
+                onClick={() => setExpenseModalOpen(true)}
+              />
             </>
           )}
         </div>
@@ -300,7 +346,7 @@ export default function WorkerDetails() {
 
       {/* History */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+        <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="font-semibold text-gray-800">Transaction History</h3>
           {txs.length > 0 && (
             <DateRangePicker
@@ -313,9 +359,9 @@ export default function WorkerDetails() {
         {filteredTxs.length === 0 ? (
           <p className="p-8 text-center text-gray-400">No transactions in this period.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[28rem] overflow-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+              <thead className="sticky top-0 z-10 bg-gray-50 text-xs uppercase text-gray-500 shadow-sm">
                 <tr>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Type</th>
@@ -369,50 +415,96 @@ export default function WorkerDetails() {
         }}
       />
 
-      <AdvanceHistoryModal
+      <HistoryModal
         open={advanceModalOpen}
         onClose={() => setAdvanceModalOpen(false)}
-        worker={worker}
+        title="Advance History"
         txs={txs}
-        dateFilter={dateFilter}
-        onDateFilterChange={setDateFilter}
+        filter={(t) => t.type === TRANSACTION_TYPES.ADVANCE}
+        describe={(t) => t.note || "Advance"}
+        amount={(t) => t.amount || 0}
+        color="text-amber-600"
+        emptyText="No advances in this period."
       />
 
-      <BalanceHistoryModal
+      <HistoryModal
         open={balanceModalOpen}
         onClose={() => setBalanceModalOpen(false)}
-        worker={worker}
+        title="Balance Reduction History"
         txs={txs}
-        dateFilter={dateFilter}
-        onDateFilterChange={setDateFilter}
+        filter={(t) => t.work_details?.advance_reduced}
+        describe={(t) =>
+          t.type === "work" ? "Advance reduced by work" : "Advance reduced by salary"
+        }
+        amount={(t) => t.work_details?.advance_reduced || 0}
+        displayAmount={(t) =>
+          `−${formatCurrency(t.work_details?.advance_reduced || 0)}`
+        }
+        color="text-green-600"
+        totalLabel="Total Reduced"
+        emptyText="No balance reductions in this period."
       />
 
-      <BonusHistoryModal
+      <HistoryModal
         open={bonusModalOpen}
         onClose={() => setBonusModalOpen(false)}
-        worker={worker}
+        title="Bonus History"
         txs={txs}
-        dateFilter={dateFilter}
-        onDateFilterChange={setDateFilter}
+        filter={(t) => t.type === "bonus"}
+        describe={(t) => t.note || "Bonus"}
+        amount={(t) => t.amount || 0}
+        color="text-purple-600"
+        emptyText="No bonuses in this period."
       />
 
-      <SalaryHistoryModal
+      <HistoryModal
+        open={expenseModalOpen}
+        onClose={() => setExpenseModalOpen(false)}
+        title="Expense History"
+        txs={txs}
+        filter={(t) => t.type === "expense"}
+        describe={(t) => t.work_details?.purpose || "Expense"}
+        amount={(t) => t.amount || 0}
+        color="text-orange-600"
+        emptyText="No expenses in this period."
+      />
+
+      <HistoryModal
         open={salaryModalOpen}
         onClose={() => setSalaryModalOpen(false)}
-        worker={worker}
+        title="Salary History"
         txs={txs}
-        dateFilter={dateFilter}
-        onDateFilterChange={setDateFilter}
+        filter={(t) => t.type === "salary"}
+        describe={(t) => describeWork(t)}
+        amount={(t) => t.amount || 0}
+        color="text-green-600"
+        emptyText="No salaries in this period."
       />
 
-      <SalaryIncrementModal
+      <HistoryModal
         open={incrementModalOpen}
         onClose={() => setIncrementModalOpen(false)}
-        worker={worker}
-        onSaved={async () => {
-          setIncrementModalOpen(false);
-          await load();
-        }}
+        title="Increment History"
+        txs={txs}
+        filter={(t) => t.type === "increment"}
+        describe={(t) =>
+          `${formatCurrency(t.work_details?.old_salary || 0)} → ${formatCurrency(
+            t.work_details?.new_salary || 0
+          )}`
+        }
+        amount={(t) =>
+          (Number(t.work_details?.new_salary) || 0) -
+          (Number(t.work_details?.old_salary) || 0)
+        }
+        displayAmount={(t) =>
+          `+${formatCurrency(
+            (Number(t.work_details?.new_salary) || 0) -
+              (Number(t.work_details?.old_salary) || 0)
+          )}`
+        }
+        color="text-indigo-600"
+        totalLabel="Total Increase"
+        emptyText="No increments yet."
       />
 
       <EditWorkerModal
@@ -441,34 +533,26 @@ function Row({ label, value }) {
 function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
   const isSalary = worker.type === WORKER_TYPES.SALARY;
 
-  // Type options: employees get 2 options, contract workers get 3
+  // Type options per worker kind (Expense applies to both).
   const typeOptions = isSalary
-    ? ["advance", "salary"]
-    : [TRANSACTION_TYPES.WORK, TRANSACTION_TYPES.ADVANCE, TRANSACTION_TYPES.PAYMENT];
+    ? ["salary", "advance", "bonus", "increment", "expense"]
+    : [TRANSACTION_TYPES.WORK, TRANSACTION_TYPES.ADVANCE, "bonus", "expense"];
 
   // Start with salary for employees, work for contract
   const initialType = isSalary ? "salary" : TRANSACTION_TYPES.WORK;
   const [type, setType] = useState(initialType);
 
-  // Contract work category: 'splicing' | 'wire_laying' | 'custom'
-  const initialCategory =
-    worker.work_type === WORK_TYPES.SPLICING
-      ? "splicing"
-      : worker.work_type === WORK_TYPES.WIRE_LAYING
-      ? "wire_laying"
-      : "custom";
-  const [category, setCategory] = useState(initialCategory);
-  const [customName, setCustomName] = useState("");
-
   const [joints, setJoints] = useState("");
-  const [km, setKm] = useState("");
   const [amount, setAmount] = useState("");
   const [salaryDate, setSalaryDate] = useState(new Date().toISOString().split("T")[0]);
   const [leaveDays, setLeaveDays] = useState("");
+  const [newSalary, setNewSalary] = useState(""); // for increment
+  const [purpose, setPurpose] = useState(EXPENSE_PURPOSES[0]); // for expense
   const [note, setNote] = useState("");
 
-  // For salary workers: calculate total advance from existing transactions
-  const [totalAdvance, setTotalAdvance] = useState(0);
+  // Advance figures loaded when the modal opens.
+  const [totalAdvance, setTotalAdvance] = useState(0); // gross advances given
+  const [outstandingAdvance, setOutstandingAdvance] = useState(0); // given − reduced
 
   // Salary calculation: monthly salary - leave deduction - advance reduced
   const salaryBase = Number(worker.monthly_salary) || 0;
@@ -477,71 +561,81 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
   const advanceReduced = Number(amount) || 0;
   const salaryNet = Math.max(0, salaryBase - leaveDeduction - advanceReduced);
 
-  // Load total advance when modal opens
+  // Contractor work payout: gross (per joint) − advance reduced = net to pay.
+  const workGross = calcSplicing(joints, worker.pricing);
+  const workNet = Math.max(0, workGross - advanceReduced);
+
+  // Load advance figures when the modal opens.
   useEffect(() => {
     if (open && worker?.id) {
       getWorkerTransactions(worker.id).then((txs) => {
-        const adv = txs
+        const given = txs
           .filter((t) => t.type === TRANSACTION_TYPES.ADVANCE)
           .reduce((sum, t) => sum + (t.amount || 0), 0);
-        setTotalAdvance(adv);
+        const reduced = txs.reduce(
+          (sum, t) => sum + (Number(t.work_details?.advance_reduced) || 0),
+          0
+        );
+        setTotalAdvance(given);
+        setOutstandingAdvance(Math.max(0, given - reduced));
       });
     }
   }, [open, worker?.id]);
 
-  const [suggestions, setSuggestions] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // Load remembered custom work types whenever the modal opens.
+  // Auto-fill the note from whatever is entered — for every type, both kinds.
   useEffect(() => {
-    if (open) {
-      getWorkTypeSuggestions().then(setSuggestions).catch(() => {});
-    }
-  }, [open]);
+    const parts = [];
+    const monthYear = salaryDate
+      ? new Date(salaryDate).toLocaleString("en-IN", {
+          month: "long",
+          year: "numeric",
+        })
+      : "";
 
-  // Live "Will earn" preview for work entries.
-  let workPreview = 0;
-  if (type === "salary") {
-    // Employee salary entry
-    workPreview = salaryNet;
-  } else if (type === TRANSACTION_TYPES.WORK) {
-    if (category === "splicing") workPreview = calcSplicing(joints);
-    else if (category === "wire_laying") workPreview = calcWireLaying(km);
-    else workPreview = Number(amount) || 0;
-  }
-
-  // Auto-fill note for salary entries based on selected fields
-  useEffect(() => {
-    if (type === "salary" && isSalary) {
-      const parts = [];
-
-      // Format date nicely (e.g., "May 2026")
-      if (salaryDate) {
-        const d = new Date(salaryDate);
-        const monthYear = d.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
-        parts.push(monthYear);
-      }
-      if (leaveDays && Number(leaveDays) > 0) {
-        parts.push(`${leaveDays} day leave`);
-      }
-      if (amount && Number(amount) > 0) {
+    if (type === "salary") {
+      if (monthYear) parts.push(monthYear);
+      if (Number(leaveDays) > 0) parts.push(`${leaveDays} day leave`);
+      if (Number(amount) > 0)
         parts.push(`Advance reduced: ${formatCurrency(Number(amount))}`);
-      }
-      if (parts.length > 0) {
-        setNote(parts.join(", "));
-      }
+    } else if (type === TRANSACTION_TYPES.WORK) {
+      if (Number(joints) > 0) parts.push(`${joints} joints`);
+      if (Number(amount) > 0)
+        parts.push(`Advance reduced: ${formatCurrency(Number(amount))}`);
+      if (workGross > 0) parts.push(`Net paid: ${formatCurrency(workNet)}`);
+    } else if (type === "bonus") {
+      if (monthYear) parts.push(monthYear);
+      if (Number(amount) > 0)
+        parts.push(`Bonus: ${formatCurrency(Number(amount))}`);
+    } else if (type === "increment") {
+      if (Number(newSalary) > 0)
+        parts.push(
+          `Increment: ${formatCurrency(salaryBase)} → ${formatCurrency(
+            Number(newSalary)
+          )}`
+        );
+    } else if (type === TRANSACTION_TYPES.ADVANCE) {
+      if (Number(amount) > 0)
+        parts.push(`Advance: ${formatCurrency(Number(amount))}`);
+    } else if (type === "expense") {
+      parts.push(purpose);
+      if (Number(amount) > 0) parts.push(formatCurrency(Number(amount)));
     }
-  }, [type, salaryDate, leaveDays, amount, isSalary]);
+
+    if (parts.length > 0) setNote(parts.join(", "));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, salaryDate, leaveDays, amount, joints, newSalary, purpose]);
 
   const reset = () => {
     setType(isSalary ? "salary" : TRANSACTION_TYPES.WORK);
     setJoints("");
-    setKm("");
     setAmount("");
-    setCustomName("");
     setSalaryDate(new Date().toISOString().split("T")[0]);
     setLeaveDays("");
+    setNewSalary("");
+    setPurpose(EXPENSE_PURPOSES[0]);
     setNote("");
     setError("");
   };
@@ -566,39 +660,48 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
         advance_reduced: advanceReduced,
         monthly_salary: salaryBase,
       };
+    } else if (type === "bonus") {
+      // Employee bonus: extra one-time payment
+      const value = Number(amount) || 0;
+      if (value <= 0) return setError("Bonus amount must be greater than 0.");
+      payload.type = "bonus";
+      payload.amount = value;
+      payload.calculated_amount = value;
+      payload.work_details = { bonus_date: salaryDate };
+    } else if (type === "increment") {
+      // Employee raise: records old -> new and updates base salary below
+      const newSal = Number(newSalary) || 0;
+      if (newSal <= 0) return setError("Enter the new salary amount.");
+      payload.type = "increment";
+      payload.amount = 0;
+      payload.calculated_amount = newSal;
+      payload.work_details = {
+        old_salary: salaryBase,
+        new_salary: newSal,
+      };
+    } else if (type === "expense") {
+      // Petrol / other money given — recorded, but NOT deducted from pay.
+      const value = Number(amount) || 0;
+      if (value <= 0) return setError("Amount must be greater than 0.");
+      payload.type = "expense";
+      payload.amount = value;
+      payload.calculated_amount = 0;
+      payload.work_details = { purpose };
     } else if (type === TRANSACTION_TYPES.WORK) {
-      // Contract worker: work entry
-      if (isSalary) {
-        // This shouldn't happen anymore but keep as fallback
-        return setError("Invalid type for employee.");
-      } else if (category === "splicing") {
-        const value = calcSplicing(joints);
-        if (value <= 0) return setError("Enter the number of joints.");
-        payload.amount = value;
-        payload.calculated_amount = value;
-        payload.work_details = {
-          work_type: WORK_TYPES.SPLICING,
-          joints: Number(joints),
-        };
-      } else if (category === "wire_laying") {
-        const value = calcWireLaying(km);
-        if (value <= 0) return setError("Enter the distance in km.");
-        payload.amount = value;
-        payload.calculated_amount = value;
-        payload.work_details = {
-          work_type: WORK_TYPES.WIRE_LAYING,
-          km: Number(km),
-        };
-      } else {
-        // Custom work type
-        const name = customName.trim();
-        const value = Number(amount) || 0;
-        if (!name) return setError("Enter a work type name.");
-        if (value <= 0) return setError("Amount must be greater than 0.");
-        payload.amount = value;
-        payload.calculated_amount = value;
-        payload.work_details = { work_type: name, manual: true };
-      }
+      // Contract worker: splicing per joint, optionally settling advance.
+      if (workGross <= 0) return setError("Enter the number of joints.");
+      if (advanceReduced > outstandingAdvance)
+        return setError(
+          "Advance to reduce is more than the outstanding advance."
+        );
+      payload.amount = workGross;
+      payload.calculated_amount = workGross;
+      payload.work_details = {
+        work_type: WORK_TYPES.SPLICING,
+        joints: Number(joints),
+        advance_reduced: advanceReduced,
+        net: workNet,
+      };
     } else {
       // advance or payment
       const value = Number(amount) || 0;
@@ -610,6 +713,10 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
     setSaving(true);
     try {
       await addWorkerTransaction(payload);
+      // Increment also bumps the worker's stored monthly salary going forward.
+      if (type === "increment") {
+        await updateWorker(worker.id, { monthly_salary: payload.calculated_amount });
+      }
       reset();
       await onSaved();
     } catch (e) {
@@ -620,7 +727,7 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Add Transaction">
+    <Modal open={open} onClose={onClose} title="Add Transaction" size="lg">
       <form onSubmit={handleSave} className="space-y-4">
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -633,19 +740,33 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
           <label className="mb-1 block text-sm font-medium text-gray-700">
             What is this entry?
           </label>
-          <div className={`grid gap-2 ${isSalary ? "grid-cols-2" : "grid-cols-3"}`}>
+          <div
+            className={`grid gap-2 ${
+              isSalary ? "grid-cols-3 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4"
+            }`}
+          >
             {typeOptions.map((t) => (
               <button
                 key={t}
                 type="button"
-                onClick={() => setType(t)}
-                className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-sm font-medium transition ${
+                onClick={() => {
+                  // Switching type starts with a clean slate for its own fields.
+                  setType(t);
+                  setAmount("");
+                  setJoints("");
+                  setLeaveDays("");
+                  setNewSalary("");
+                  setPurpose(EXPENSE_PURPOSES[0]);
+                  setNote("");
+                  setError("");
+                }}
+                className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-3 text-xs font-medium transition sm:text-sm ${
                   type === t
                     ? "border-indigo-600 bg-indigo-50 text-indigo-700"
                     : "border-gray-200 text-gray-600 hover:bg-gray-50"
                 }`}
               >
-                <span className="text-lg">{info[t].icon}</span>
+                <span className="text-2xl">{info[t].icon}</span>
                 {info[t].label}
               </button>
             ))}
@@ -718,85 +839,112 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
           </>
         )}
 
-        {/* WORK fields for contract worker */}
-        {type === TRANSACTION_TYPES.WORK && !isSalary && (
+        {/* BONUS fields (employee + contractor) */}
+        {type === "bonus" && (
           <>
-            <Field label="Work type">
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
+            <Field label="Date">
+              <input
+                type="date"
+                value={salaryDate}
+                onChange={(e) => setSalaryDate(e.target.value)}
                 className={inputClass}
-              >
-                <option value="splicing">Splicing (auto: joints)</option>
-                <option value="wire_laying">Wire laying (auto: km)</option>
-                <option value="custom">Other / custom...</option>
-              </select>
+              />
             </Field>
-
-            {category === "splicing" && (
-              <Field label="Number of joints">
-                <input
-                  type="number"
-                  min="0"
-                  value={joints}
-                  onChange={(e) => setJoints(e.target.value)}
-                  className={inputClass}
-                  placeholder="e.g. 8"
-                />
-              </Field>
-            )}
-
-            {category === "wire_laying" && (
-              <Field label="Distance (km)">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={km}
-                  onChange={(e) => setKm(e.target.value)}
-                  className={inputClass}
-                  placeholder="e.g. 2"
-                />
-              </Field>
-            )}
-
-            {category === "custom" && (
-              <>
-                <Field label="Work type name">
-                  <input
-                    list="customWorkTypes"
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                    className={inputClass}
-                    placeholder="e.g. Pole work, Maintenance"
-                  />
-                  <datalist id="customWorkTypes">
-                    {suggestions.map((s) => (
-                      <option key={s} value={s} />
-                    ))}
-                  </datalist>
-                </Field>
-                <Field label="Amount (₹)">
-                  <input
-                    type="number"
-                    min="0"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className={inputClass}
-                    placeholder="0"
-                  />
-                </Field>
-              </>
-            )}
-
-            <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
-              Will earn: <strong>{formatCurrency(workPreview)}</strong>
+            <Field label="Bonus amount (₹)">
+              <input
+                type="number"
+                min="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className={inputClass}
+                placeholder="e.g. 2000"
+              />
+            </Field>
+            <div className="rounded-lg bg-purple-50 px-3 py-2 text-sm text-purple-800">
+              Bonus to pay: <strong>{formatCurrency(Number(amount) || 0)}</strong>
             </div>
           </>
         )}
 
-        {/* ADVANCE / PAYMENT fields */}
-        {(type === TRANSACTION_TYPES.ADVANCE || type === TRANSACTION_TYPES.PAYMENT) && (
+        {/* INCREMENT fields for employee */}
+        {type === "increment" && isSalary && (
+          <>
+            <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm">
+              <span className="text-gray-500">Current salary: </span>
+              <strong>{formatCurrency(salaryBase)}</strong>
+            </div>
+            <Field label="New monthly salary (₹)">
+              <input
+                type="number"
+                min="0"
+                value={newSalary}
+                onChange={(e) => setNewSalary(e.target.value)}
+                className={inputClass}
+                placeholder="Enter new monthly salary"
+              />
+            </Field>
+            {Number(newSalary) > salaryBase && (
+              <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
+                Increase: <strong>+{formatCurrency(Number(newSalary) - salaryBase)}</strong>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* WORK fields for contract worker — splicing per joint, settle advance */}
+        {type === TRANSACTION_TYPES.WORK && !isSalary && (
+          <>
+            <Field label="Number of joints">
+              <input
+                type="number"
+                min="0"
+                value={joints}
+                onChange={(e) => setJoints(e.target.value)}
+                className={inputClass}
+                placeholder="e.g. 8"
+              />
+            </Field>
+            {outstandingAdvance > 0 && (
+              <Field label="Advance to reduce (₹)">
+                <input
+                  type="number"
+                  min="0"
+                  max={outstandingAdvance}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className={inputClass}
+                  placeholder="0"
+                />
+              </Field>
+            )}
+            <div className="space-y-1 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
+              <div className="flex justify-between">
+                <span>Work earned ({Number(joints) || 0} joints)</span>
+                <span>{formatCurrency(workGross)}</span>
+              </div>
+              {outstandingAdvance > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Current advance</span>
+                  <span>{formatCurrency(outstandingAdvance)}</span>
+                </div>
+              )}
+              {advanceReduced > 0 && (
+                <div className="flex justify-between text-red-600">
+                  <span>Reduce from advance</span>
+                  <span>−{formatCurrency(advanceReduced)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-green-200 pt-1 font-semibold">
+                <span>Net to pay</span>
+                <span>{formatCurrency(workNet)}</span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">Rate: {pricingSummary(worker)}</p>
+          </>
+        )}
+
+        {/* ADVANCE fields */}
+        {type === TRANSACTION_TYPES.ADVANCE && (
           <Field label="Amount (₹)">
             <input
               type="number"
@@ -807,6 +955,39 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
               placeholder="0"
             />
           </Field>
+        )}
+
+        {/* EXPENSE fields (petrol / other money given — not deducted) */}
+        {type === "expense" && (
+          <>
+            <Field label="Purpose">
+              <select
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                className={inputClass}
+              >
+                {EXPENSE_PURPOSES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Amount (₹)">
+              <input
+                type="number"
+                min="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className={inputClass}
+                placeholder="0"
+              />
+            </Field>
+            <div className="rounded-lg bg-orange-50 px-3 py-2 text-sm text-orange-800">
+              {formatCurrency(Number(amount) || 0)} for {purpose} — not deducted
+              from pay.
+            </div>
+          </>
         )}
 
         <Field label="Note (optional)">
@@ -833,286 +1014,73 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
 
 // ---- History Modals ----
 
-function AdvanceHistoryModal({ open, onClose, worker, txs, dateFilter, onDateFilterChange }) {
-  const advances = txs.filter((t) => {
-    if (t.type !== TRANSACTION_TYPES.ADVANCE) return false;
-    const date = new Date(t.created_at).toISOString().split("T")[0];
-    return date >= dateFilter.start && date <= dateFilter.end;
-  });
-
-  return (
-    <Modal open={open} onClose={onClose} title="Advance History">
-      <div className="mb-4">
-        <DateRangePicker
-          start={dateFilter.start}
-          end={dateFilter.end}
-          onChange={onDateFilterChange}
-        />
-      </div>
-      {advances.length === 0 ? (
-        <p className="text-gray-500">No advances in this period.</p>
-      ) : (
-        <div className="space-y-2">
-          {advances.map((t) => (
-            <div
-              key={t.id}
-              className="flex justify-between rounded-lg border border-gray-100 p-3"
-            >
-              <div>
-                <p className="font-medium">{formatDate(t.created_at)}</p>
-                <p className="text-sm text-gray-500">{t.note || "Advance"}</p>
-              </div>
-              <p className="font-semibold text-amber-600">
-                {formatCurrency(t.amount)}
-              </p>
-            </div>
-          ))}
-          <div className="mt-4 flex justify-between border-t pt-2 font-semibold">
-            <span>Total</span>
-            <span>{formatCurrency(advances.reduce((s, t) => s + t.amount, 0))}</span>
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
+// One reusable history popup for Advance / Salary / Bonus / Increment / Balance.
+// It keeps its OWN date range (independent of the page's filter) so changing the
+// range here never affects the main page.
+function isoDate(ts) {
+  return new Date(ts).toISOString().split("T")[0];
 }
 
-function BalanceHistoryModal({ open, onClose, worker, txs, dateFilter, onDateFilterChange }) {
-  // Show salary transactions that reduced advance
-  const salaryTxs = txs.filter((t) => {
-    if (t.type !== "salary" || !t.work_details?.advance_reduced) return false;
-    const date = new Date(t.created_at).toISOString().split("T")[0];
-    return date >= dateFilter.start && date <= dateFilter.end;
-  });
+function HistoryModal({
+  open,
+  onClose,
+  title,
+  txs,
+  filter,
+  describe,
+  amount,
+  displayAmount,
+  color = "text-gray-900",
+  totalLabel = "Total",
+  emptyText = "No records in this period.",
+}) {
+  const today = new Date().toISOString().split("T")[0];
+  const [range, setRange] = useState({ start: today, end: today });
 
-  return (
-    <Modal open={open} onClose={onClose} title="Balance Reduction History">
-      <div className="mb-4">
-        <DateRangePicker
-          start={dateFilter.start}
-          end={dateFilter.end}
-          onChange={onDateFilterChange}
-        />
-      </div>
-      {salaryTxs.length === 0 ? (
-        <p className="text-gray-500">No balance reductions in this period.</p>
-      ) : (
-        <div className="space-y-2">
-          {salaryTxs.map((t) => (
-            <div
-              key={t.id}
-              className="flex justify-between rounded-lg border border-gray-100 p-3"
-            >
-              <div>
-                <p className="font-medium">
-                  {formatDate(t.created_at)}
-                </p>
-                <p className="text-sm text-gray-500">
-                  Advance reduced by salary
-                </p>
-              </div>
-              <p className="font-semibold text-green-600">
-                −{formatCurrency(t.work_details.advance_reduced)}
-              </p>
-            </div>
-          ))}
-          <div className="mt-4 flex justify-between border-t pt-2 font-semibold">
-            <span>Total Reduced</span>
-            <span>
-              {formatCurrency(
-                salaryTxs.reduce((s, t) => s + (t.work_details?.advance_reduced || 0), 0)
-              )}
-            </span>
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-function SalaryHistoryModal({ open, onClose, worker, txs, dateFilter, onDateFilterChange }) {
-  const salaries = txs.filter((t) => {
-    if (t.type !== "salary") return false;
-    const date = new Date(t.created_at).toISOString().split("T")[0];
-    return date >= dateFilter.start && date <= dateFilter.end;
-  });
-
-  return (
-    <Modal open={open} onClose={onClose} title="Salary History">
-      <div className="mb-4">
-        <DateRangePicker
-          start={dateFilter.start}
-          end={dateFilter.end}
-          onChange={onDateFilterChange}
-        />
-      </div>
-      {salaries.length === 0 ? (
-        <p className="text-gray-500">No salaries in this period.</p>
-      ) : (
-        <div className="space-y-2">
-          {salaries.map((t) => (
-            <div
-              key={t.id}
-              className="flex justify-between rounded-lg border border-gray-100 p-3"
-            >
-              <div>
-                <p className="font-medium">
-                  {formatDate(t.created_at)}
-                </p>
-                <p className="text-sm text-gray-500">
-                  {describeWork(t)}
-                </p>
-              </div>
-              <p className="font-semibold text-green-600">
-                {formatCurrency(t.amount)}
-              </p>
-            </div>
-          ))}
-          <div className="mt-4 flex justify-between border-t pt-2 font-semibold">
-            <span>Total</span>
-            <span>
-              {formatCurrency(salaries.reduce((s, t) => s + t.amount, 0))}
-            </span>
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-function BonusHistoryModal({ open, onClose, worker, txs, dateFilter, onDateFilterChange }) {
-  const bonuses = txs.filter((t) => {
-    if (t.type !== "bonus") return false;
-    const date = new Date(t.created_at).toISOString().split("T")[0];
-    return date >= dateFilter.start && date <= dateFilter.end;
-  });
-
-  return (
-    <Modal open={open} onClose={onClose} title="Bonus History">
-      <div className="mb-4">
-        <DateRangePicker
-          start={dateFilter.start}
-          end={dateFilter.end}
-          onChange={onDateFilterChange}
-        />
-      </div>
-      {bonuses.length === 0 ? (
-        <p className="text-gray-500">No bonuses in this period.</p>
-      ) : (
-        <div className="space-y-2">
-          {bonuses.map((t) => (
-            <div
-              key={t.id}
-              className="flex justify-between rounded-lg border border-gray-100 p-3"
-            >
-              <div>
-                <p className="font-medium">
-                  {formatDate(t.created_at)}
-                </p>
-                <p className="text-sm text-gray-500">{t.note || "Bonus"}</p>
-              </div>
-              <p className="font-semibold text-purple-600">
-                {formatCurrency(t.amount)}
-              </p>
-            </div>
-          ))}
-          <div className="mt-4 flex justify-between border-t pt-2 font-semibold">
-            <span>Total</span>
-            <span>
-              {formatCurrency(bonuses.reduce((s, t) => s + t.amount, 0))}
-            </span>
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-function SalaryIncrementModal({ open, onClose, worker, onSaved }) {
-  const [newSalary, setNewSalary] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const currentSalary = Number(worker.monthly_salary) || 0;
-  const incrementAmount = Number(newSalary) - currentSalary;
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    setError("");
-
-    const newSal = Number(newSalary);
-    if (!newSal || newSal <= 0) return setError("Enter new salary amount.");
-
-    setSaving(true);
-    try {
-      await addWorkerTransaction({
-        worker_id: worker.id,
-        type: "increment",
-        amount: 0,
-        calculated_amount: newSal,
-        work_details: {
-          old_salary: currentSalary,
-          new_salary: newSal,
-        },
-      });
-
-      // Also update the worker's base salary
-      await updateWorker(worker.id, { monthly_salary: newSal });
-
-      setNewSalary("");
-      await onSaved();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
+  // When opened, default to "show everything of this type" (earliest → today).
+  useEffect(() => {
+    if (open) {
+      const dates = txs.filter(filter).map((t) => isoDate(t.created_at)).sort();
+      setRange({ start: dates[0] || today, end: today });
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const items = txs.filter(
+    (t) =>
+      filter(t) && isoDate(t.created_at) >= range.start && isoDate(t.created_at) <= range.end
+  );
+  const total = items.reduce((s, t) => s + (Number(amount(t)) || 0), 0);
 
   return (
-    <Modal open={open} onClose={onClose} title="Add Salary Increment">
-      <form onSubmit={handleSave} className="space-y-4">
-        {error && (
-          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
+    <Modal open={open} onClose={onClose} title={title}>
+      <div className="mb-4">
+        <DateRangePicker start={range.start} end={range.end} onChange={setRange} />
+      </div>
+      {items.length === 0 ? (
+        <p className="text-gray-500">{emptyText}</p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((t) => (
+            <div
+              key={t.id}
+              className="flex justify-between gap-3 rounded-lg border border-gray-100 p-3"
+            >
+              <div className="min-w-0">
+                <p className="font-medium">{formatDate(t.created_at)}</p>
+                <p className="truncate text-sm text-gray-500">{describe(t)}</p>
+              </div>
+              <p className={`shrink-0 font-semibold ${color}`}>
+                {displayAmount ? displayAmount(t) : formatCurrency(amount(t))}
+              </p>
+            </div>
+          ))}
+          <div className="mt-4 flex justify-between border-t pt-2 font-semibold">
+            <span>{totalLabel}</span>
+            <span>{formatCurrency(total)}</span>
           </div>
-        )}
-
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="text-sm text-gray-600">Current salary</p>
-          <p className="text-lg font-semibold">
-            {formatCurrency(currentSalary)}
-          </p>
         </div>
-
-        <Field label="New salary (₹)">
-          <input
-            type="number"
-            min="0"
-            value={newSalary}
-            onChange={(e) => setNewSalary(e.target.value)}
-            className={inputClass}
-            placeholder="Enter new monthly salary"
-          />
-        </Field>
-
-        {newSalary && incrementAmount > 0 && (
-          <div className="rounded-lg bg-green-50 p-3">
-            <p className="text-sm text-green-700">Increase</p>
-            <p className="text-lg font-semibold text-green-700">
-              +{formatCurrency(incrementAmount)}
-            </p>
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={saving}>
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </div>
-      </form>
+      )}
     </Modal>
   );
 }
@@ -1120,11 +1088,13 @@ function SalaryIncrementModal({ open, onClose, worker, onSaved }) {
 function EditWorkerModal({ open, onClose, worker, onSaved }) {
   const [form, setForm] = useState({
     name: "",
-    type: "",
+    type: WORKER_TYPES.SALARY,
+    work_type: WORK_TYPES.OTHER,
     monthly_salary: "",
-    salary_pay_day: "",
+    salary_pay_day: "1",
     phone: "",
     address: "",
+    ...DEFAULT_PRICING_FORM,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1133,11 +1103,15 @@ function EditWorkerModal({ open, onClose, worker, onSaved }) {
     if (open && worker) {
       setForm({
         name: worker.name || "",
-        type: worker.type || "",
-        monthly_salary: worker.monthly_salary || "",
-        salary_pay_day: worker.salary_pay_day || "",
+        type: worker.type || WORKER_TYPES.SALARY,
+        work_type: worker.work_type || WORK_TYPES.OTHER,
+        monthly_salary: worker.monthly_salary ?? "",
+        salary_pay_day: worker.salary_pay_day
+          ? String(worker.salary_pay_day)
+          : "1",
         phone: worker.phone || "",
         address: worker.address || "",
+        ...pricingToFormFields(worker.pricing),
       });
     }
   }, [open, worker]);
@@ -1157,8 +1131,18 @@ function EditWorkerModal({ open, onClose, worker, onSaved }) {
     try {
       await updateWorker(worker.id, {
         name: form.name.trim(),
-        monthly_salary: Number(form.monthly_salary) || null,
-        salary_pay_day: Number(form.salary_pay_day) || null,
+        type: form.type,
+        work_type:
+          form.type === WORKER_TYPES.CONTRACT ? form.work_type : null,
+        pricing: buildPricing(form),
+        monthly_salary:
+          form.type === WORKER_TYPES.SALARY
+            ? Number(form.monthly_salary) || 0
+            : 0,
+        salary_pay_day:
+          form.type === WORKER_TYPES.SALARY
+            ? Number(form.salary_pay_day) || null
+            : null,
         phone: form.phone.trim() || null,
         address: form.address.trim() || null,
       });
@@ -1179,63 +1163,7 @@ function EditWorkerModal({ open, onClose, worker, onSaved }) {
           </div>
         )}
 
-        <Field label="Name">
-          <input
-            name="name"
-            value={form.name}
-            onChange={handleChange}
-            className={inputClass}
-            required
-          />
-        </Field>
-
-        {worker.type === WORKER_TYPES.SALARY && (
-          <>
-            <Field label="Monthly salary (₹)">
-              <input
-                name="monthly_salary"
-                type="number"
-                min="0"
-                value={form.monthly_salary}
-                onChange={handleChange}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Salary pay day">
-              <select
-                name="salary_pay_day"
-                value={form.salary_pay_day}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option value="">Select day</option>
-                {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                  <option key={d} value={d}>
-                    {ordinal(d)} of month
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </>
-        )}
-
-        <Field label="Phone">
-          <input
-            name="phone"
-            value={form.phone}
-            onChange={handleChange}
-            className={inputClass}
-          />
-        </Field>
-
-        <Field label="Address">
-          <input
-            name="address"
-            value={form.address}
-            onChange={handleChange}
-            className={inputClass}
-          />
-        </Field>
+        <WorkerForm form={form} onChange={handleChange} />
 
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>

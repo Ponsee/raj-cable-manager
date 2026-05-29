@@ -3,9 +3,13 @@ import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/ui/PageHeader";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
+import WorkerForm, {
+  DEFAULT_PRICING_FORM,
+  buildPricing,
+} from "../components/forms/WorkerForm";
 import { getWorkersWithBalance, createWorker } from "../services/workersService";
 import { WORKER_TYPES, WORK_TYPES, WORKER_TYPE_LABELS } from "../constants";
-import { formatCurrency, ordinal } from "../utils/format";
+import { formatCurrency } from "../utils/format";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -18,6 +22,7 @@ const emptyForm = {
   salary_pay_day: "1",
   phone: "",
   address: "",
+  ...DEFAULT_PRICING_FORM,
 };
 
 export default function Workers() {
@@ -59,6 +64,7 @@ export default function Workers() {
         name: form.name.trim(),
         type: form.type,
         work_type: form.type === WORKER_TYPES.CONTRACT ? form.work_type : null,
+        pricing: buildPricing(form),
         monthly_salary:
           form.type === WORKER_TYPES.SALARY
             ? Number(form.monthly_salary) || 0
@@ -134,7 +140,7 @@ export default function Workers() {
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Type</th>
                   <th className="px-4 py-3">Work</th>
-                  <th className="px-4 py-3 text-right">Balance</th>
+                  <th className="px-4 py-3 text-right">Balance Due</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
@@ -194,113 +200,7 @@ export default function Workers() {
             </div>
           )}
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Name *
-            </label>
-            <input
-              name="name"
-              required
-              value={form.name}
-              onChange={handleChange}
-              className={inputClass}
-              placeholder="Worker name"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Type *
-            </label>
-            <select
-              name="type"
-              value={form.type}
-              onChange={handleChange}
-              className={inputClass}
-            >
-              <option value={WORKER_TYPES.SALARY}>Employee</option>
-              <option value={WORKER_TYPES.CONTRACT}>Contract worker</option>
-            </select>
-          </div>
-
-          {form.type === WORKER_TYPES.SALARY ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Monthly salary (₹)
-                </label>
-                <input
-                  name="monthly_salary"
-                  type="number"
-                  min="0"
-                  value={form.monthly_salary}
-                  onChange={handleChange}
-                  className={inputClass}
-                  placeholder="20000"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Salary pay day
-                </label>
-                <select
-                  name="salary_pay_day"
-                  value={form.salary_pay_day}
-                  onChange={handleChange}
-                  className={inputClass}
-                >
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                    <option key={d} value={d}>
-                      {ordinal(d)} of month
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Main work type
-              </label>
-              <select
-                name="work_type"
-                value={form.work_type}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option value={WORK_TYPES.SPLICING}>Splicing</option>
-                <option value={WORK_TYPES.WIRE_LAYING}>Wire laying</option>
-                <option value={WORK_TYPES.OTHER}>Other</option>
-              </select>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Phone
-              </label>
-              <input
-                name="phone"
-                value={form.phone}
-                onChange={handleChange}
-                className={inputClass}
-                placeholder="Optional"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Address
-              </label>
-              <input
-                name="address"
-                value={form.address}
-                onChange={handleChange}
-                className={inputClass}
-                placeholder="Optional"
-              />
-            </div>
-          </div>
+          <WorkerForm form={form} onChange={handleChange} />
 
           <div className="flex justify-end gap-2 pt-2">
             <Button

@@ -29,6 +29,7 @@ create table if not exists workers (
   name text not null,
   type text not null,                   -- 'salary' (employee) | 'contract'
   work_type text,                       -- 'splicing' | 'wire_laying' | 'other'
+  pricing jsonb,                        -- per-contractor rates, e.g. splicing {low_joint_limit,low_rate,high_rate} or wire_laying {rate_per_km}
   monthly_salary numeric default 0,
   salary_pay_day int,                   -- day of month salary is due (1-31)
   phone text,
@@ -42,9 +43,9 @@ create table if not exists workers (
 create table if not exists worker_transactions (
   id uuid primary key default gen_random_uuid(),
   worker_id uuid references workers (id) on delete cascade,
-  type text not null,                   -- 'advance' | 'work' | 'payment'
+  type text not null,                   -- advance | work | salary | bonus | increment | expense
   amount numeric default 0,
-  work_details jsonb,                   -- e.g. {"joints": 8} or {"km": 2}
+  work_details jsonb,                   -- e.g. {"joints":8}, {"purpose":"Petrol"}, {"advance_reduced":500}
   calculated_amount numeric default 0,
   note text,
   created_at timestamptz default now()

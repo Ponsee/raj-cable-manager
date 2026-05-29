@@ -1,5 +1,10 @@
 // Centered popup dialog. Click the dark backdrop or ✕ to close.
-export default function Modal({ open, onClose, title, children }) {
+const sizes = {
+  md: "max-w-md",
+  lg: "max-w-lg",
+};
+
+export default function Modal({ open, onClose, title, children, size = "md" }) {
   if (!open) return null;
 
   return (
@@ -8,7 +13,7 @@ export default function Modal({ open, onClose, title, children }) {
       onClick={onClose}
     >
       <div
-        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white shadow-xl"
+        className={`max-h-[90vh] w-full ${sizes[size] || sizes.md} overflow-y-auto rounded-2xl bg-white shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">

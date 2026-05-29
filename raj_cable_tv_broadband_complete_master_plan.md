@@ -160,9 +160,11 @@ Purpose:
 create table workers (
   id uuid primary key default gen_random_uuid(),
   name text,
-  type text,
-  work_type text,
+  type text,                 -- 'salary' (Employee) | 'contract'
+  work_type text,            -- 'splicing' | 'wire_laying' | 'other'
+  pricing jsonb,             -- per-contractor rates (added 2026-05-29)
   monthly_salary numeric,
+  salary_pay_day int,        -- day 1-31 salary is due (added 2026-05-22)
   phone text,
   address text,
   is_active boolean default true,
@@ -175,19 +177,17 @@ create table workers (
 # 3️⃣ worker_transactions
 
 Purpose:
-- Full history
-- Advance
-- Work
-- Payment
+- Full history (never edited; only inserted — Business Rule 1)
+- type: advance | work | salary | bonus | increment | expense (free text)
 
 ```sql
 create table worker_transactions (
   id uuid primary key default gen_random_uuid(),
   worker_id uuid references workers(id) on delete cascade,
-  type text,
+  type text,                 -- advance|work|salary|bonus|increment|expense
   amount numeric,
-  work_details jsonb,
-  calculated_amount numeric,
+  work_details jsonb,        -- {joints,advance_reduced,net} | {purpose} | {salary_date,leave_days,...}
+  calculated_amount numeric, -- work earned / new salary; 0 for advance & expense
   note text,
   created_at timestamp default now()
 );
@@ -1014,51 +1014,68 @@ This architecture is designed to:
 
 ### Transaction Types
 
-#### Salary Workers
+> NOTE: This "IMPLEMENTATION UPDATES" section reflects the ACTUAL current
+> behaviour (last updated 2026-05-29) and SUPERSEDES the original plan sections
+> above wherever they differ (transaction types, balance formula, contractor
+> work, etc.).
+
+#### Employee (salary) — 5 transaction types
 
 | Type | Meaning |
 |---|---|
-| advance | Money given before salary day |
-| salary | Monthly salary payment |
-| bonus | Additional bonus |
-| increment | Salary increase |
+| salary | Monthly salary payout (net of leave + advance reduced) |
+| advance | Cash given early; reduced from a later salary |
+| bonus | Extra one-time payment (NOT deducted) |
+| increment | Raise; updates stored monthly_salary going forward |
+| expense | Petrol/other money given for work — NOT deducted from pay |
 
-#### Contract Workers
+#### Contract worker — 4 transaction types (splicing only for now)
 
 | Type | Meaning |
 |---|---|
-| advance | Money given before work |
-| work | Work entry (splicing, wire laying, custom) |
-| payment | Payment for work done |
+| work | Splicing, paid per joint; can settle advance at entry (net to pay) |
+| advance | Cash given early; settled later from a work payout |
+| bonus | Extra one-time payment (NOT deducted) |
+| expense | Petrol/other money given for work — NOT deducted from pay |
+
+The contractor **payment** type was REMOVED — paying happens through the Work
+entry (gross − advance reduced = net to pay). `worker_transactions.type` is free
+text (no DB constraint), so advance/work/salary/bonus/increment/expense are all
+valid. Wire-laying / custom contractor work is not exposed in the UI for now
+(splicing only) though `calcWireLaying` and the pricing schema still support it.
 
 ---
 
 # 💰 Salary Worker Transaction Modal
-
-## Employee Options
-
-For employees, the form shows only 2 options:
-- **Advance** - Money given before salary day
-- **Salary** - Monthly salary payment
 
 ### Salary Transaction Fields
 
 | Field | Description |
 |---|---|
 | Date | Salary payment date |
-| Advance to reduce | Read-only, shows current advance balance |
+| Advance to reduce (₹) | How much of the outstanding advance to settle now |
 | Leave days (deducted) | Days of leave taken |
-| Note | Auto-generated |
+| Note | Auto-generated (editable) |
+
+A live breakdown box shows: Monthly salary, Current advance, Leave deduction,
+Reduce from advance, and the final Net salary to pay.
 
 ### Net Salary Calculation
 
 ```
+Daily Rate = Monthly Salary / 30
 Net Salary = Monthly Salary - (Leave Days × Daily Rate) - Advance to Reduce
 ```
 
 ### Auto Note Generation
 
-Example: "May 2026, 2 day leave, Advance reduced: ₹5,000"
+The note auto-fills from the entered values for EVERY type, both worker kinds:
+- salary → "May 2026, 2 day leave, Advance reduced: ₹5,000"
+- advance → "Advance: ₹5,000"
+- bonus → "May 2026, Bonus: ₹2,000"
+- increment → "Increment: ₹20,000 → ₹25,000"
+- work (contractor) → "8 joints, Advance reduced: ₹500, Net paid: ₹220"
+- expense → "Petrol, ₹500"
 
 ---
 
@@ -1073,65 +1090,139 @@ Example: "May 2026, 2 day leave, Advance reduced: ₹5,000"
 
 ## Increment Transaction
 
-Increases the worker's base salary. Tracked via separate modal (not in Add Transaction form).
+Added from the MAIN Add Transaction form (the old "+" button on the card was
+removed). Records old → new salary AND updates the worker's stored
+`monthly_salary` going forward. The Increment card opens its history (read-only).
 
-Shows difference between old salary and new salary.
+## Expense Transaction (employee + contractor)
+
+Petrol / Food / Travel / Material / Other money GIVEN to a worker for work.
+It is recorded for tracking only — it is NOT deducted from salary/work pay and
+never affects Balance Due (`calculated_amount = 0`, `work_details = {purpose}`).
+This was a deliberate choice ("never deduct petrol").
 
 ---
 
 # 📊 Worker Summary Cards
 
-## Salary Worker Cards (4 cards)
+## Employee Cards (6 cards)
 
 | Card | Icon | Click Action |
 |---|---|---|
-| Total Salary | 💰 | Opens Salary History modal |
-| Increment | 📈 | Opens Increment modal with "+" button |
-| Total Advance | 💵 | Opens Advance History modal |
-| Balance Due | ⚖️ | Opens Balance Reduction modal |
+| Total Salary | 💰 | Opens Salary History |
+| Total Bonus | 🎁 | Opens Bonus History |
+| Increment | 📈 | Opens Increment History (shows last raise) |
+| Total Advance | 💵 | Opens Advance History |
+| Balance Due | ⚖️ | Opens Balance Reduction History |
+| Total Expense | ⛽ | Opens Expense History |
 
-## Contract Worker Cards (4 cards)
+## Contract Worker Cards (5 cards)
 
 | Card | Icon | Click Action |
 |---|---|---|
 | Total Work | 🛠️ | - |
-| Total Paid | ✅ | - |
-| Total Advance | 💵 | Opens Advance History modal |
-| Balance Due | ⚖️ | Opens Balance Reduction modal |
+| Total Bonus | 🎁 | Opens Bonus History |
+| Total Advance | 💵 | Opens Advance History (shows OUTSTANDING advance) |
+| Balance Due | ⚖️ | Opens Balance Reduction History |
+| Total Expense | ⛽ | Opens Expense History |
+
+For a contractor, Total Advance and Balance Due are the same number (the
+outstanding advance), because work is paid in full at entry.
 
 ---
 
 # 📋 History Modals
 
-All modals include date range pickers:
+There is ONE reusable `HistoryModal` component. Each open modal keeps its OWN
+date range (defaults to earliest matching entry → today) that is INDEPENDENT of
+the page's transaction-history filter — changing the range in a modal never
+affects the page. Used for:
 - Advance History
 - Salary History
 - Bonus History
-- Balance Reduction History
+- Increment History
+- Balance Reduction History (entries where an advance was reduced, salary OR work)
+- Expense History
 
 ---
 
 # 🔑 Worker Balance Formula (Updated)
 
-## Salary Workers
+`calcBalance(transactions, workerType)` takes the worker type and branches.
+Advance reductions are read from `work_details.advance_reduced` on ANY entry
+(salary or work). Expense entries never affect balance.
+
+## Employee
 
 ```
-Balance Due = Total Advance Given - Total Advance Reduced by Salary
+Balance Due = max(0, Total Advance Given − Total Advance Reduced by Salary)
 ```
 
-The balance represents how much the worker still owes the owner.
+Represents the advance the worker still owes / that is still outstanding.
 
-## Contract Workers
+## Contract Worker
 
 ```
-Balance = Total Work - Total Paid - Total Advance
+Balance Due = max(0, Total Advance Given − Total Advance Reduced by Work)
 ```
+
+Because work is paid in full when recorded (gross − advance reduced = net paid),
+the only running balance is the outstanding advance. `Total Advance` shows this
+same outstanding value, so it DROPS after a work payout settles an advance.
+
+---
+
+# 🛠️ Contract Worker Work Entry (splicing per joint)
+
+- Enter number of joints → gross = joints × per-joint rate (from worker pricing).
+- Optional "Advance to reduce (₹)" (only shows if advance outstanding; capped at it).
+- Breakdown: Work earned, Current advance, Reduce from advance, Net to pay.
+- Saved as `work_details = { work_type:"splicing", joints, advance_reduced, net }`.
+
+# 💵 Per-Contractor Pricing
+
+`workers.pricing` (jsonb) stores each contractor's own rates:
+- splicing → `{ low_joint_limit, low_rate, high_rate }` (defaults 4 / 100 / 90)
+- wire_laying → `{ rate_per_km }` (default 3500)
+
+Editable in the Add/Edit Worker form (shows fields based on chosen work type).
+`calcSplicing(joints, pricing)` / `calcWireLaying(km, pricing)` use the worker's
+pricing and fall back to the global defaults. The profile shows a plain-English
+summary, e.g. "Up to 4 joints: ₹100 per joint. More than 4 joints: ₹90 per joint."
+
+# ✏️ Add / Edit Worker Form
+
+Add and Edit both use the shared `components/forms/WorkerForm.jsx` (same layout).
+Editable fields: name, type (Employee/Contract — DB stores salary/contract),
+work_type + pricing (contract), monthly_salary + salary_pay_day 1–31 (employee),
+phone, address. Helpers: `buildPricing`, `pricingToFormFields`,
+`DEFAULT_PRICING_FORM`.
+
+# 📋 Workers List
+
+`getWorkersWithBalance()` joins transactions, selects `work_details`, and calls
+`calcBalance(txs, w.type)` so the list "Balance Due" column matches each worker's
+details page exactly.
+
+# 🗄️ DB Columns Added (run in Supabase SQL Editor)
+
+- `workers.salary_pay_day int`  → migrations/2026-05-22_add_salary_pay_day.sql
+- `workers.pricing jsonb`        → migrations/2026-05-29_add_worker_pricing.sql
+- No migration needed for the `expense` type (worker_transactions.type is free text).
 
 ---
 
 # 🧩 StatCard Component
 
-Updated to support:
-- `onClick` - Click handler for the card
-- `children` - For adding buttons inside the card
+Supports:
+- `onClick` - makes the card a clickable button (opens a history modal)
+- `children` - optional content inside the card
+- `accent` - green / red / blue / amber / indigo / purple / orange
+
+# 📱 UI / Responsiveness
+
+- Add Transaction modal is wide (`size="lg"`); type buttons use a responsive
+  grid (employee 5, contractor 4) — one row on desktop, wraps on mobile.
+- Transaction History has an inner scroll (`max-h`) with a sticky header.
+- Date range pickers wrap on small screens; layout is mobile-first.
 

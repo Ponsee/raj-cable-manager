@@ -18,9 +18,12 @@ export async function getWorkers() {
 export async function getWorkersWithBalance() {
   const workers = await getWorkers();
 
+  // work_details is needed so calcBalance can subtract advances already
+  // settled from salary (work_details.advance_reduced) — otherwise the list
+  // shows total advances given, not the real Balance Due.
   const { data: txs, error } = await supabase
     .from("worker_transactions")
-    .select("worker_id, type, amount, calculated_amount");
+    .select("worker_id, type, amount, calculated_amount, work_details");
   if (error) throw error;
 
   const byWorker = {};
@@ -30,7 +33,7 @@ export async function getWorkersWithBalance() {
 
   return workers.map((w) => ({
     ...w,
-    ...calcBalance(byWorker[w.id] || []),
+    ...calcBalance(byWorker[w.id] || [], w.type),
   }));
 }
 
