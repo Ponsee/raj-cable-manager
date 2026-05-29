@@ -56,9 +56,23 @@ create table if not exists products (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   category text,
+  subcategory text,                     -- free-text brand/variant (e.g. TCCL, Airtel)
+  product_type text,                    -- 'shop' (resale) | 'service' (materials)
   unit text,
+  image_url text,                       -- Supabase Storage public URL
+  selling_price numeric,                -- price sold to customers (pre-fills Sales)
   minimum_stock numeric default 0,
-  current_stock numeric default 0,
+  current_stock numeric default 0,      -- legacy; stock is computed from transactions
+  created_at timestamptz default now()
+);
+
+-- vendors: suppliers we buy stock from.
+create table if not exists vendors (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  phone text,
+  address text,
+  note text,
   created_at timestamptz default now()
 );
 
@@ -66,11 +80,13 @@ create table if not exists products (
 create table if not exists stock_transactions (
   id uuid primary key default gen_random_uuid(),
   product_id uuid references products (id) on delete cascade,
-  type text not null,                   -- 'purchase' | 'sale'
+  type text not null,                   -- 'purchase' | 'sale' | 'usage' (used in service)
   quantity numeric default 0,
-  price_per_unit numeric default 0,
+  price_per_unit numeric default 0,    -- purchase cost (or sale price for sales)
+  selling_price numeric,               -- planned selling price set with a purchase
   total_amount numeric default 0,
-  vendor_name text,
+  vendor_name text,                     -- name snapshot for quick display
+  vendor_id uuid references vendors (id),
   note text,
   created_at timestamptz default now()
 );
@@ -125,6 +141,7 @@ alter table profiles            enable row level security;
 alter table workers             enable row level security;
 alter table worker_transactions enable row level security;
 alter table products            enable row level security;
+alter table vendors             enable row level security;
 alter table stock_transactions  enable row level security;
 alter table income              enable row level security;
 alter table expenses            enable row level security;
@@ -189,6 +206,17 @@ create policy "products admin all" on products for all
 create policy "products read" on products for select
   using (get_user_role() in ('admin','staff','viewer'));
 create policy "products staff insert" on products for insert
+  with check (get_user_role() in ('admin','staff'));
+
+-- VENDORS
+drop policy if exists "vendors admin all"    on vendors;
+drop policy if exists "vendors read"         on vendors;
+drop policy if exists "vendors staff insert" on vendors;
+create policy "vendors admin all" on vendors for all
+  using (get_user_role() = 'admin') with check (get_user_role() = 'admin');
+create policy "vendors read" on vendors for select
+  using (get_user_role() in ('admin','staff','viewer'));
+create policy "vendors staff insert" on vendors for insert
   with check (get_user_role() in ('admin','staff'));
 
 -- STOCK TRANSACTIONS

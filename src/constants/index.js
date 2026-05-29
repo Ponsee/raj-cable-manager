@@ -44,8 +44,20 @@ export const WIRE_LAYING_RATE_PER_KM = 3500;
 
 // ---- Stock transactions ----
 export const STOCK_TYPES = {
-  PURCHASE: "purchase",
-  SALE: "sale",
+  PURCHASE: "purchase", // stock in (creates an expense)
+  SALE: "sale", // stock out + income
+  USAGE: "usage", // stock out for service work (no income)
+};
+
+// ---- Product classification ----
+export const PRODUCT_TYPES = {
+  SHOP: "shop", // resale goods (remote, torch, HDMI...)
+  SERVICE: "service", // materials used for cable work (fiber, splitter...)
+};
+
+export const PRODUCT_TYPE_LABELS = {
+  [PRODUCT_TYPES.SHOP]: "Shop product",
+  [PRODUCT_TYPES.SERVICE]: "Service material",
 };
 
 // ---- Categories (used in dropdowns) ----
@@ -81,6 +93,7 @@ export const NAV_ITEMS = [
   { label: "Dashboard", path: "/dashboard", icon: "📊" },
   { label: "Workers", path: "/workers", icon: "👷" },
   { label: "Products", path: "/products", icon: "📦" },
+  { label: "Vendors", path: "/vendors", icon: "🏪" },
   { label: "Income", path: "/income", icon: "🟢" },
   { label: "Expense", path: "/expense", icon: "🔴" },
   { label: "Reports", path: "/reports", icon: "📑" },

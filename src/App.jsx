@@ -7,6 +7,9 @@ import Dashboard from "./pages/Dashboard";
 import Workers from "./pages/Workers";
 import WorkerDetails from "./pages/WorkerDetails";
 import Products from "./pages/Products";
+import ProductDetails from "./pages/ProductDetails";
+import Vendors from "./pages/Vendors";
+import VendorDetails from "./pages/VendorDetails";
 import Income from "./pages/Income";
 import Expense from "./pages/Expense";
 import Reports from "./pages/Reports";
@@ -31,6 +34,9 @@ function App() {
           <Route path="/workers" element={<Workers />} />
           <Route path="/workers/:id" element={<WorkerDetails />} />
           <Route path="/products" element={<Products />} />
+          <Route path="/products/:id" element={<ProductDetails />} />
+          <Route path="/vendors" element={<Vendors />} />
+          <Route path="/vendors/:id" element={<VendorDetails />} />
           <Route path="/income" element={<Income />} />
           <Route path="/expense" element={<Expense />} />
           <Route path="/reports" element={<Reports />} />
