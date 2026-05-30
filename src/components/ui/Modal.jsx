@@ -1,33 +1,40 @@
-// Centered popup dialog. Click the dark backdrop or ✕ to close.
+// Centered popup dialog — now backed by MUI Dialog.
+// Same API as before: open, onClose, title, children, size ("md" | "lg").
+import Dialog from "@mui/material/Dialog";
+import DialogTitle from "@mui/material/DialogTitle";
+import DialogContent from "@mui/material/DialogContent";
+import IconButton from "@mui/material/IconButton";
+import CloseIcon from "@mui/icons-material/Close";
+
 const sizes = {
-  md: "max-w-md",
-  lg: "max-w-lg",
+  md: "sm",
+  lg: "md",
 };
 
 export default function Modal({ open, onClose, title, children, size = "md" }) {
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={sizes[size] || sizes.md}
+      fullWidth
+      PaperProps={{ sx: { borderRadius: 3 } }}
     >
-      <div
-        className={`max-h-[90vh] w-full ${sizes[size] || sizes.md} overflow-y-auto rounded-2xl bg-white shadow-xl`}
-        onClick={(e) => e.stopPropagation()}
+      <DialogTitle
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontWeight: 600,
+          fontSize: "1.05rem",
+        }}
       >
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-          <h3 className="font-semibold text-gray-900">{title}</h3>
-          <button
-            onClick={onClose}
-            className="text-xl leading-none text-gray-400 hover:text-gray-600"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="p-5">{children}</div>
-      </div>
-    </div>
+        {title}
+        <IconButton onClick={onClose} size="small" aria-label="Close">
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent dividers>{children}</DialogContent>
+    </Dialog>
   );
 }

@@ -1,0 +1,323 @@
+# Raj Cable Manager — Module Reference (Workers · Products · Vendors · Income · Expense)
+
+Last updated: 2026-05-30. This documents the features built so far in the
+**Workers**, **Products**, **Vendors**, **Income**, and **Expense** modules,
+plus the setup steps (migrations / Supabase config) needed for them to work.
+
+> **UI note:** the app now uses **MUI (Material UI)**. Shared UI primitives
+> (`Button`, `Modal`, `StatCard`, `PageHeader`, `DateRangePicker`) and the
+> finance/product forms are built on MUI, themed via `src/theme.js` (indigo
+> brand) and wrapped in `ThemeProvider` + `LocalizationProvider` in `main.jsx`.
+> Tailwind is still used for page layout.
+
+---
+
+## ⚙️ Setup checklist (run these in Supabase once)
+
+**SQL Editor → run each migration in `supabase/migrations/`:**
+
+| Migration file | Adds |
+|---|---|
+| `2026-05-22_add_salary_pay_day.sql` | `workers.salary_pay_day` |
+| `2026-05-29_add_worker_pricing.sql` | `workers.pricing` (jsonb) |
+| `2026-05-29_product_fields.sql` | `products.product_type`, `subcategory`, `image_url` |
+| `2026-05-29_product_selling_price.sql` | `products.selling_price` + `stock_transactions.selling_price` |
+| `2026-05-29_vendors.sql` | `vendors` table + `stock_transactions.vendor_id` + RLS |
+| `2026-05-30_auth_approval.sql` | `profiles` email/phone/status/approval + signup trigger + admin update policy |
+| `2026-05-30_income_payment_and_stock_loss.sql` | `income.payment_method` (Cash/Online) + `idx_stock_tx_type` |
+| `2026-05-30_income_stock_link.sql` | `income.stock_tx_id` → links a product sale to its stock movement |
+| `2026-05-30_product_code_images.sql` | `products.code` (easy ID) + `products.image_urls` (multi-image) |
+
+**Storage:** create a **public** bucket named **`product-images`**
+(Storage → New bucket → Public: ON) for product photo uploads.
+
+**npm packages added:** `qrcode.react`, `html5-qrcode`, **`@mui/material`,
+`@mui/icons-material`, `@emotion/react`, `@emotion/styled`,
+`@mui/x-date-pickers`, `dayjs`** (run `npm install` if pulling fresh).
+
+> The app degrades gracefully if a migration hasn't been run yet (e.g. income
+> still loads without `payment_method`/`stock_tx_id`; products save without
+> `code`/`image_urls`). Run them to get the full behavior.
+
+> `schema.sql` is the full fresh-setup script and already includes all of the above.
+
+---
+
+## 🔐 Authentication & users
+
+### Sign up (name + mobile)
+- Signup collects **full name**, **mobile number**, email, password.
+- A new `profiles` row is created with `name`, `phone`, `email`; the DB trigger
+  decides `role` + `status` (the client never sets these).
+
+### Admin approval gate
+- `profiles.status` = `pending` | `approved` | `disabled` (default `pending`).
+- **Admin emails** in `set_profile_on_signup()` (SQL) auto-approve as **admin**
+  on signup. Edit that `admin_emails` list + re-run the function to change who's
+  an admin. (`ADMIN_EMAILS` in `constants/index.js` mirrors it for messaging.)
+- Everyone else is **pending** until an admin approves them and picks a role.
+- `get_user_role()` returns a role **only when `status = 'approved'`**, so
+  disabling a user instantly cuts off all data access (RLS).
+- Login is gated in two places: `Login.jsx` checks status after sign-in (shows
+  "waiting for approval" / "disabled" and signs them out), and `AuthContext`
+  signs out any restored session that isn't approved.
+
+### Roles
+- **Admin** (full control) and **Staff** (add & view). Viewer dropped from the
+  UI (`ASSIGNABLE_ROLES`). Existing viewer RLS read policies are harmless.
+
+### Forgot / reset password
+- "Forgot password?" on the login card emails a reset link
+  (`resetPasswordForEmail`, redirects to `/reset-password`).
+- `ResetPassword.jsx` (public route) sets the new password via `updateUser`.
+
+### Users admin screen (`/users`, admin only)
+- `services/usersService.js`: `getProfiles`, `approveUser(id, role, by)`,
+  `setUserRole`, `setUserStatus`, `getPendingCount`.
+- **Approval requests** section (pending users) → **Approve & set role** (modal:
+  Admin/Staff) or **Reject** (→ disabled). **All users** table → change role,
+  **Disable** / **Enable** (via `ConfirmDialog`). You can't change your own row.
+- **Nav badge:** the **👥 Users** item shows only for admins, with an amber
+  badge of the pending-approval count.
+
+---
+
+## 👷 Workers module
+
+### Worker types
+- Two types: **Employee** (`type = "salary"`) and **Contract worker** (`type = "contract"`).
+  UI labels via `WORKER_TYPE_LABELS`; DB still stores `salary`/`contract`.
+- Add/Edit use a shared form `components/forms/WorkerForm.jsx`.
+- Employee fields: monthly salary, **salary pay day** (1–31). Contractor fields:
+  work type + **per-worker pricing**.
+
+### Transaction types
+- **Employee:** `salary`, `advance`, `bonus`, `increment`, `expense`
+- **Contractor:** `work`, `advance`, `bonus`, `expense` (no "payment" — paying
+  happens through the Work entry)
+- `worker_transactions.type` is free text (no DB constraint).
+
+### Money logic (`utils/workerCalc.js` → `calcBalance(txs, workerType)`)
+- **Employee Balance Due** = outstanding advance = `max(0, advancesGiven − advancesReduced)`.
+- **Contractor Balance Due** = also outstanding advance — because Work is paid at
+  entry (gross − advance reduced = net to pay), so the only running balance is the
+  unsettled advance. `Total Advance` shows this outstanding amount (drops when work settles it).
+- `expense` entries are tracked separately and **never** affect balance/pay.
+- Advance reductions are read from `work_details.advance_reduced` on any salary/work entry.
+
+### Salary entry
+- Net = `monthly_salary − (leaveDays × monthly/30) − advanceToReduce`, with a live breakdown.
+
+### Contractor work entry (splicing only, per joint)
+- Enter joints → gross (per-joint pricing); optional **Advance to reduce** → net to pay.
+- Stored `work_details = { work_type:"splicing", joints, advance_reduced, net }`.
+
+### Per-contractor pricing (`workers.pricing` jsonb)
+- splicing → `{ low_joint_limit, low_rate, high_rate }` (defaults 4/100/90)
+- wire_laying → `{ rate_per_km }` (default 3500)
+- `calcSplicing(joints, pricing)` / `calcWireLaying(km, pricing)` use it, falling
+  back to global `SPLICING_RATES` / `WIRE_LAYING_RATE_PER_KM`.
+
+### Expense type (petrol / other)
+- Money given to a worker (Petrol/Food/Travel/Material/Other) that is **not**
+  deducted from pay. `type="expense"`, `calculated_amount=0`, `work_details={purpose}`.
+
+### Worker pay flows into the Expense ledger
+- `addWorkerTransaction(tx, { workerName })` auto-creates a matching **Expense**
+  row for every **cash-out** transaction, so business expenses include worker pay:
+  - `salary` → **Staff salary** (net paid), `advance` → **Worker advance**,
+    `payment` → **Staff payment**, `bonus` → **Staff bonus**,
+    `expense` → **Worker expense**, `work` → **Contract work** (uses the **net**
+    = gross − advance reduced, so advances aren't double-counted).
+  - **`work`'s net** and **`increment`** (a raise record, no cash) are the only
+    types not expensed as full amounts; `increment` is skipped entirely.
+- Expense rows are labelled with the worker's name. Applies to new transactions
+  only (no back-fill of past worker pay).
+- ⚠️ Don't also add salaries manually on the Expense page — that would double-count.
+
+### UI
+- Add Transaction: type buttons on one responsive row; auto-filled note for every type.
+- One reusable `HistoryModal` per stat card (Salary / Bonus / Increment / Advance /
+  Balance reduction / Expense), each with its **own** date range (independent of the page).
+- Stat cards per type (incl. **Total Expense** ⛽). Transaction history has inner
+  scroll + sticky header. Workers list "Balance Due" matches the details page.
+
+---
+
+## 📦 Products module
+
+### Product fields
+- `code` (easy ID), `name`, `product_type` (**Shop** / **Service material**),
+  `category`, `subcategory` (free-text brand, e.g. TCCL/Airtel), `unit`,
+  `selling_price`, `minimum_stock` (low-stock alert), `image_url` (primary),
+  `image_urls` (all photos).
+- **Category** is an add-new combobox (defaults + used categories + "➕ Add new…").
+- **Subcategory** is free-text with auto-suggestions.
+- Add/Edit use shared `components/forms/ProductForm.jsx`; edit dialog is the shared
+  `components/products/EditProductModal.jsx` (used by both list and details).
+
+### Easy-to-remember product code (`products.code`)
+- Auto-generated per category prefix + running number: **Cable→CAB001,
+  Connector→CON001, ONU→ONU001, Router→RTR001, Fiber→FIB001, Splitter→SPL001,
+  Other→OTH001** (unknown categories use the first 3 letters). Map in
+  `PRODUCT_CODE_PREFIXES`; generation in `productsService.generateProductCode()`.
+- **Editable** by the user in Add/Edit (blank = auto-assign). Shown as a badge in
+  the products list and in the details header.
+
+### Multiple images (up to 5) — upload or camera
+- `components/products/ProductImages.jsx`: pick several from the gallery
+  (**Upload**, `multiple`) or take a photo (**Camera**, `capture="environment"`),
+  each removable; first photo is the **Main** one (`image_url`), all stored in
+  `image_urls`. Each file uploaded via `uploadProductImage`.
+- Details page shows the **main image + clickable thumbnail strip** (placeholder
+  box when a product has no photo).
+
+### Stock (always computed — Business Rule 2)
+- `utils/productCalc.js → calcStock(txs)`: stock = purchased − sold − used − **lost**;
+  also returns purchase/sale value, last purchase price, stock value, usedQty,
+  **lostQty**, **lossValue**.
+- `isLowStock(stock, min)`, `pricesByVendor(txs)` (cheapest-first vendor comparison).
+
+### Stock entry types (`stock_transactions.type`)
+- **Purchase** 🛒 — stock in; creates an **Expense**; per-batch **selling price**;
+  pick a **vendor**.
+- **Sale** 💰 — stock out; creates an **Income**; pre-filled from selling price;
+  blocked if it exceeds available stock.
+- **Used in service** 🔧 — stock out, **no income** (materials consumed on a job).
+- **Loss / damage** ⚠️ — stock out, **no income**; written off as damaged /
+  missing / defective / returned. Reason stored in `note` (`LOSS_REASONS`).
+
+### Report Loss / Damage (`components/products/StockLossModal.jsx`)
+- A shared "Report Loss / Damage" action on **Product Details** (product fixed)
+  and the **Income page** (pick any product). Reduces stock, creates **no**
+  income/expense; capped at available stock. Service: `recordStockLoss()`.
+- Details page has a clickable **⚠️ Lost / Damaged** card (qty + approx value) →
+  loss history with the date-range filter; also a "Lost / damaged" row + filter
+  + red badge in stock history.
+
+### Selling price (per purchase batch)
+- Stored per purchase on `stock_transactions.selling_price` (can differ each batch).
+- `products.selling_price` caches the **latest** one; pre-fills Sales + Scan-to-Sell.
+- Editable directly in the product form; shown in the profile + stock history
+  (`· sell @ ₹X`).
+
+### Price by vendor
+- Product details shows each vendor's **lowest + latest** purchase price for that
+  product, cheapest first (green "cheapest" tag).
+
+### QR + scan-to-sell
+- Each product page renders a **QR** (encodes the product id) with **Print label**.
+- **📷 Scan to Sell** (Products list) opens the camera (`html5-qrcode`), finds the
+  product, and records a Sale. (Needs HTTPS or localhost.)
+
+### Full CRUD
+- List: Add, **Edit**, **Delete** per row, search + type/category filters
+  (category filter includes newly-added categories).
+- Details: Edit + **Delete**, stock cards, low-stock banner, **date-range filter**
+  on stock history, QR/print.
+
+---
+
+## 🏪 Vendors module
+
+- `vendors` table: `name`, `phone`, `address`, `note`. Nav item **🏪 Vendors**.
+- **List** (`/vendors`): search, add, shows orders count + total spent per vendor.
+- **Details** (`/vendors/:id`): profile + stats (Total Orders, Total Spent),
+  **Edit**, **Delete** (unlinks past purchases, keeps history).
+- **Pick a vendor when buying** (in the product Add-Stock purchase flow): dropdown
+  of vendors + "➕ Add new vendor". Stored as `vendor_id` (+ `vendor_name` snapshot).
+- **Bulk Purchase** (from a vendor): add many products at once —
+  product (with "➕ Add new product" inline), qty, cost, sell price per line;
+  order-level **Discount** and **Transport cost**; records one purchase row per
+  line + one combined **Expense** (`subtotal − discount + transport`).
+- **Purchase history**: **By batch** view (one bulk order = one batch block with
+  its total) or **All items**, plus a **date-range filter**.
+
+---
+
+## 🟢 Income module (`pages/Income.jsx`)
+
+### Sources & batch entry
+- **Add Income** is a batch form (one date, many entries). `INCOME_SOURCES`
+  drive the fields per entry via a `mode`:
+  - `simple` (Daily Collection, Cable Collection, Other) → just an amount.
+  - `device` (Shop Collection, New Cable HD/SD, New Internet) → **multiple
+    products** (each qty + price), optional **charge** (e.g. install). Priced
+    item → **Sale** (income + stock out); ₹0 item → **Used** (stock out, no income).
+  - `provider` (Internet Recharge) → provider (`INTERNET_PROVIDERS`, add-new) + amount.
+- Over-sell guard aggregates product quantities across the whole batch.
+
+### Payment method (Cash / Online)
+- Per-entry **Paid via** toggle: **Cash** or **Online** (Online = GPay/PhonePe/UPI).
+  Stored on `income.payment_method`. Anything non-Cash is treated as Online
+  (covers old GPay/Other rows). Service: `addEntry`/`addStockTransaction` carry it.
+
+### Cash over/short adjustment
+- A single **Cash extra (+) / short (−)** field (separate from the source list).
+  It auto-adjusts the total and saves as an `Adjustment` income row tagged
+  **Cash** (online is always exact, so the adjustment is cash-only).
+
+### History, cards, filters
+- **Daily** view groups entries by day; each day header shows **💵 cash · 📱 online ·
+  total** and a 🗑️ **batch-delete**. **All** view is a flat table. Both scroll.
+- Stat cards: Today's collection · Total (range) · **Cash** · **Online** ·
+  Avg/day · **Days with income**.
+- Filters: search, **payment** (All/Cash/Online), shared **DateRangePicker**,
+  Export CSV. Per-row 🗑️ delete too.
+
+### Product sale ↔ stock link & edit/delete
+- Each product-sale income row links to its stock movement via `income.stock_tx_id`
+  (set in `addStockTransaction`).
+- **Delete restores stock:** `deleteIncomeEntry` / `deleteIncomeBatch` remove the
+  linked `stock_transactions` row, so stock is added back (since stock is computed).
+  Only works for sales recorded **after** the `stock_tx_id` migration; older/unlinked
+  sales delete money only.
+- `updateProductSale()` exists to edit a sale's product/qty/price and keep stock in
+  sync (the interactive batch *edit* UI was removed in favor of batch delete).
+
+---
+
+## 🔴 Expense module (`pages/Expense.jsx` via `components/finance/LedgerPage.jsx`)
+
+- Shared **LedgerPage** ledger (table `expenses`): search, category filter,
+  DateRangePicker, Export CSV, scrollable table, add/delete (via `ConfirmDialog`).
+- **Cards:** Total Expense · Today · Avg/day · **Top category** · Entries.
+- **Auto-populated from:** product **purchases** (single + bulk) and **worker pay**
+  (salary/advance/payment/bonus/petrol/contract-work — see Workers). Plus any
+  manual entries (Electricity, Fuel, Office, etc.).
+- `services/financeService.js`: `getEntries` (income also selects
+  `payment_method`, `stock_tx_id`, with graceful fallbacks), `addEntry`,
+  `updateEntry`, `deleteEntry`, `deleteIncomeEntry`, `deleteIncomeBatch`.
+
+---
+
+## 🧩 Shared / UI components added
+
+| File | Purpose |
+|---|---|
+| `theme.js` + `main.jsx` | MUI theme (indigo) + `ThemeProvider` / `LocalizationProvider` |
+| `components/ui/Button.jsx` | MUI Button (variants primary/secondary/danger/ghost) |
+| `components/ui/Modal.jsx` | MUI Dialog wrapper (same `open/onClose/title/size` API) |
+| `components/ui/StatCard.jsx` | MUI Paper card; accents green/red/blue/amber/indigo/purple/orange |
+| `components/ui/PageHeader.jsx` | MUI Typography title row |
+| `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
+| `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / This year / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()` |
+| `components/finance/LedgerPage.jsx` | Shared money ledger (used by Expense) |
+| `components/products/StockLossModal.jsx` | Report loss/damage (Income + Product Details) |
+| `components/products/ProductImages.jsx` | Multi-image picker (upload + camera, max 5) |
+| `components/forms/WorkerForm.jsx` | Shared worker add/edit fields + pricing helpers |
+| `components/forms/ProductForm.jsx` | Shared product add/edit fields (code + images) |
+| `components/forms/VendorForm.jsx` | Shared vendor add/edit fields |
+| `components/products/EditProductModal.jsx` | Shared product edit dialog |
+| `components/products/ScanToSellModal.jsx` | Camera scan → record sale |
+
+---
+
+## 🔑 Business rules honored
+1. Never edit historical transactions — only INSERT new ones (income product
+   sales are an exception via `updateProductSale`, which keeps stock in sync).
+2. Stock & worker balances are always computed from transactions.
+3. Purchases auto-create Expenses; Sales auto-create Income; worker cash-outs
+   auto-create Expenses; product loss reduces stock with no money entry.
+4. Deletes always go through a confirmation dialog. Deleting a product-sale
+   income (row or whole day) also removes its stock movement, restoring stock.

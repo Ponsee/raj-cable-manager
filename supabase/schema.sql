@@ -14,12 +14,17 @@
 -- 1. TABLES
 -- ---------------------------------------------------------------------
 
--- profiles: one row per logged-in user, holds their role.
+-- profiles: one row per logged-in user, holds their role + approval status.
 -- id matches the user id created by Supabase Auth.
 create table if not exists profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   name text,
-  role text not null default 'staff',   -- 'admin' | 'staff' | 'viewer'
+  email text,
+  phone text,
+  role text,                            -- 'admin' | 'staff' (null until approved)
+  status text not null default 'pending', -- 'pending' | 'approved' | 'disabled'
+  approved_at timestamptz,
+  approved_by uuid references auth.users (id),
   created_at timestamptz default now()
 );
 
@@ -54,11 +59,27 @@ create table if not exists worker_transactions (
 -- products: inventory master list.
 create table if not exists products (
   id uuid primary key default gen_random_uuid(),
+  code text,                            -- easy-to-remember code, e.g. CAB001 / RTR001
   name text not null,
   category text,
+  subcategory text,                     -- free-text brand/variant (e.g. TCCL, Airtel)
+  product_type text,                    -- 'shop' (resale) | 'service' (materials)
   unit text,
+  image_url text,                       -- primary image (first of image_urls)
+  image_urls text[],                    -- all image URLs (up to ~5)
+  selling_price numeric,                -- price sold to customers (pre-fills Sales)
   minimum_stock numeric default 0,
-  current_stock numeric default 0,
+  current_stock numeric default 0,      -- legacy; stock is computed from transactions
+  created_at timestamptz default now()
+);
+
+-- vendors: suppliers we buy stock from.
+create table if not exists vendors (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  phone text,
+  address text,
+  note text,
   created_at timestamptz default now()
 );
 
@@ -66,11 +87,13 @@ create table if not exists products (
 create table if not exists stock_transactions (
   id uuid primary key default gen_random_uuid(),
   product_id uuid references products (id) on delete cascade,
-  type text not null,                   -- 'purchase' | 'sale'
+  type text not null,                   -- 'purchase' | 'sale' | 'usage' | 'loss'
   quantity numeric default 0,
-  price_per_unit numeric default 0,
+  price_per_unit numeric default 0,    -- purchase cost (or sale price for sales)
+  selling_price numeric,               -- planned selling price set with a purchase
   total_amount numeric default 0,
-  vendor_name text,
+  vendor_name text,                     -- name snapshot for quick display
+  vendor_id uuid references vendors (id),
   note text,
   created_at timestamptz default now()
 );
@@ -81,6 +104,8 @@ create table if not exists income (
   amount numeric default 0,
   category text,
   note text,
+  payment_method text,                  -- 'Cash' | 'Online' (how it was received)
+  stock_tx_id uuid references stock_transactions (id) on delete set null, -- links a product sale to its stock movement
   created_at timestamptz default now()
 );
 
@@ -102,9 +127,12 @@ create index if not exists idx_stock_tx on stock_transactions (product_id);
 
 
 -- ---------------------------------------------------------------------
--- 3. ROLE HELPER FUNCTION
--- Returns the role of the currently logged-in user.
--- SECURITY DEFINER lets it read the profiles table safely.
+-- 3. ROLE HELPER + SIGNUP TRIGGER
+-- get_user_role(): role of the current user, but ONLY if approved.
+--   (Disabling a user instantly removes their data access.)
+-- set_profile_on_signup(): decides role/status when a profile is created.
+--   Admin emails (edit the list) auto-approve as admin; everyone else
+--   is 'pending' until an admin approves them.
 -- ---------------------------------------------------------------------
 create or replace function get_user_role()
 returns text
@@ -113,8 +141,40 @@ stable
 security definer
 set search_path = public
 as $$
-  select role from profiles where id = auth.uid()
+  select role from profiles where id = auth.uid() and status = 'approved'
 $$;
+
+create or replace function public.set_profile_on_signup()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  user_email   text;
+  admin_emails text[] := array[
+    'ponseelan.11@gmail.com',
+    'rajbroadbandsendamaram@gmail.com'
+  ];
+begin
+  select email into user_email from auth.users where id = new.id;
+  new.email := coalesce(new.email, user_email);
+  if user_email = any (admin_emails) then
+    new.role        := 'admin';
+    new.status      := 'approved';
+    new.approved_at := now();
+  else
+    new.role   := null;
+    new.status := 'pending';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_set_profile_on_signup on profiles;
+create trigger trg_set_profile_on_signup
+  before insert on profiles
+  for each row execute function set_profile_on_signup();
 
 
 -- ---------------------------------------------------------------------
@@ -125,6 +185,7 @@ alter table profiles            enable row level security;
 alter table workers             enable row level security;
 alter table worker_transactions enable row level security;
 alter table products            enable row level security;
+alter table vendors             enable row level security;
 alter table stock_transactions  enable row level security;
 alter table income              enable row level security;
 alter table expenses            enable row level security;
@@ -139,6 +200,7 @@ alter table expenses            enable row level security;
 drop policy if exists "Own profile insert"  on profiles;
 drop policy if exists "Own profile select"  on profiles;
 drop policy if exists "Admin read profiles" on profiles;
+drop policy if exists "Admin update profiles" on profiles;
 
 create policy "Own profile insert"
   on profiles for insert
@@ -151,6 +213,12 @@ create policy "Own profile select"
 create policy "Admin read profiles"
   on profiles for select
   using (get_user_role() = 'admin');
+
+-- Admins can approve / change role / disable other users.
+create policy "Admin update profiles"
+  on profiles for update
+  using (get_user_role() = 'admin')
+  with check (get_user_role() = 'admin');
 
 
 -- Helper note for the business tables below:
@@ -191,6 +259,17 @@ create policy "products read" on products for select
 create policy "products staff insert" on products for insert
   with check (get_user_role() in ('admin','staff'));
 
+-- VENDORS
+drop policy if exists "vendors admin all"    on vendors;
+drop policy if exists "vendors read"         on vendors;
+drop policy if exists "vendors staff insert" on vendors;
+create policy "vendors admin all" on vendors for all
+  using (get_user_role() = 'admin') with check (get_user_role() = 'admin');
+create policy "vendors read" on vendors for select
+  using (get_user_role() in ('admin','staff','viewer'));
+create policy "vendors staff insert" on vendors for insert
+  with check (get_user_role() in ('admin','staff'));
+
 -- STOCK TRANSACTIONS
 drop policy if exists "stx admin all"    on stock_transactions;
 drop policy if exists "stx read"         on stock_transactions;
@@ -225,9 +304,9 @@ create policy "expenses staff insert" on expenses for insert
   with check (get_user_role() in ('admin','staff'));
 
 -- =====================================================================
--- Done. Next: sign up your first user in the app, then come back here
--- and make yourself an admin by running (replace the email):
---
---   update profiles set role = 'admin'
---   where id = (select id from auth.users where email = 'you@example.com');
+-- Done. The admin emails in set_profile_on_signup() auto-approve as
+-- admin when they sign up. Everyone else is 'pending' until an admin
+-- approves them (and picks a role) on the in-app Users screen.
+-- To change who is an admin, edit the admin_emails list above and re-run
+-- the create-function statement.
 -- =====================================================================

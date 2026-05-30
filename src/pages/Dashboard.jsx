@@ -2,19 +2,22 @@ import PageHeader from "../components/ui/PageHeader";
 import StatCard from "../components/ui/StatCard";
 import { formatCurrency } from "../utils/format";
 import { useAuth } from "../context/AuthContext";
+import { ROLES } from "../constants";
 
 // Placeholder values for now. Real numbers get wired in once Workers /
 // Products / Income / Expense modules exist (Module 5 in the plan).
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const name = user?.email?.split("@")[0] || "there";
+  const isAdmin = role === ROLES.ADMIN;
 
   const tiles = [
     { label: "Total Income", value: 0, icon: "💰", accent: "green" },
     { label: "Total Expense", value: 0, icon: "💸", accent: "red" },
     { label: "Profit", value: 0, icon: "📈", accent: "blue" },
-    { label: "Pending Salary", value: 0, icon: "👷", accent: "amber" },
-  ];
+    // Worker pay is admin-only.
+    { label: "Pending Salary", value: 0, icon: "👷", accent: "amber", adminOnly: true },
+  ].filter((tile) => !tile.adminOnly || isAdmin);
 
   return (
     <div>

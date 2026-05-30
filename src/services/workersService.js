@@ -80,14 +80,52 @@ export async function getWorkerTransactions(workerId) {
   return data;
 }
 
+// Worker transaction types that are real money LEAVING the business, mapped to
+// the Expense category they should appear under. 'increment' (a raise record)
+// is NOT cash out, so it's absent here.
+const WORKER_EXPENSE_CATEGORY = {
+  salary: "Staff salary",
+  bonus: "Staff bonus",
+  expense: "Worker expense",
+  advance: "Worker advance",
+  payment: "Staff payment",
+  work: "Contract work", // contract worker is paid the net for the work done
+};
+
+// How much cash this transaction actually pays out. For contract 'work' we use
+// the NET (gross minus any advance already settled) so the advance — which was
+// expensed when it was given — isn't counted twice.
+function workerExpenseAmount(tx) {
+  if (tx.type === "work") return Number(tx.work_details?.net) || 0;
+  return Number(tx.amount) || 0;
+}
+
 // Business Rule 1: we only ever INSERT transactions, never edit old ones.
-export async function addWorkerTransaction(tx) {
+// Cash-out transactions also create a matching Expense row, so the business's
+// total expenses include worker pay. Pass { workerName } to label the expense.
+export async function addWorkerTransaction(tx, { workerName } = {}) {
   const { data, error } = await supabase
     .from("worker_transactions")
     .insert([tx])
     .select()
     .single();
   if (error) throw error;
+
+  const category = WORKER_EXPENSE_CATEGORY[tx.type];
+  const amount = workerExpenseAmount(tx);
+  if (category && amount > 0) {
+    const note = workerName ? `${category} — ${workerName}` : category;
+    const { error: e } = await supabase.from("expenses").insert([
+      {
+        amount,
+        category,
+        note,
+        ...(tx.created_at ? { created_at: tx.created_at } : {}),
+      },
+    ]);
+    if (e) throw e;
+  }
+
   return data;
 }
 

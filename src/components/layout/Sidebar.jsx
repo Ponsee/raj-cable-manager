@@ -1,8 +1,22 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { NAV_ITEMS } from "../../constants";
+import { NAV_ITEMS, ROLES } from "../../constants";
+import { useAuth } from "../../context/AuthContext";
+import { getPendingCount } from "../../services/usersService";
 
 // Left navigation. On mobile it slides in/out (controlled by `open`).
 export default function Sidebar({ open, onClose }) {
+  const { role } = useAuth();
+  const isAdmin = role === ROLES.ADMIN;
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Admins see how many sign-ups are waiting for approval.
+  useEffect(() => {
+    if (isAdmin) getPendingCount().then(setPendingCount);
+  }, [isAdmin]);
+
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+
   return (
     <>
       {/* Dark overlay behind the sidebar on mobile */}
@@ -20,21 +34,11 @@ export default function Sidebar({ open, onClose }) {
       >
         {/* Brand */}
         <div className="flex items-center gap-3 border-b border-slate-700/60 px-5 py-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500 shadow-lg shadow-indigo-500/30">
-            <svg
-              className="h-5 w-5 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M8.288 15.038a5.25 5.25 0 017.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 011.06 0z"
-              />
-            </svg>
-          </div>
+          <img
+            src="/LOGO.png"
+            alt="Raj Cable TV & Broadband"
+            className="h-10 w-10 shrink-0 rounded-xl bg-white object-contain p-0.5 shadow-lg shadow-indigo-500/30"
+          />
           <div className="leading-tight">
             <h1 className="text-sm font-bold">Raj Cable TV</h1>
             <p className="text-xs text-slate-400">& Broadband</p>
@@ -43,7 +47,7 @@ export default function Sidebar({ open, onClose }) {
 
         {/* Nav */}
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -57,7 +61,12 @@ export default function Sidebar({ open, onClose }) {
               }
             >
               <span className="text-base">{item.icon}</span>
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {item.path === "/users" && pendingCount > 0 && (
+                <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white">
+                  {pendingCount}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
