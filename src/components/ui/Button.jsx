@@ -1,18 +1,31 @@
-// Consistent button used across the whole app.
+// Consistent button used across the whole app — now backed by MUI.
+// Keeps the same `variant` names (primary/secondary/danger/ghost) so every
+// existing caller works unchanged.
+import MuiButton from "@mui/material/Button";
+
+const MAP = {
+  primary: { variant: "contained", color: "primary" },
+  secondary: { variant: "outlined", color: "inherit" },
+  danger: { variant: "contained", color: "error" },
+  ghost: { variant: "text", color: "inherit" },
+};
+
 export default function Button({
   variant = "primary",
   className = "",
+  children,
   ...props
 }) {
-  const base =
-    "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60";
-
-  const variants = {
-    primary: "bg-indigo-600 text-white hover:bg-indigo-700",
-    secondary: "border border-gray-300 text-gray-700 hover:bg-gray-50",
-    danger: "bg-red-500 text-white hover:bg-red-600",
-    ghost: "text-gray-600 hover:bg-gray-100",
-  };
-
-  return <button className={`${base} ${variants[variant]} ${className}`} {...props} />;
+  const m = MAP[variant] || MAP.primary;
+  return (
+    <MuiButton
+      variant={m.variant}
+      color={m.color}
+      className={className}
+      disableRipple={false}
+      {...props}
+    >
+      {children}
+    </MuiButton>
+  );
 }

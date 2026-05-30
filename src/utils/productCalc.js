@@ -8,8 +8,10 @@ export function calcStock(transactions = []) {
   let purchasedQty = 0;
   let soldQty = 0;
   let usedQty = 0; // consumed in service work
+  let lostQty = 0; // written off: damaged / missing / returned
   let purchaseValue = 0; // ₹ spent buying
   let saleValue = 0; // ₹ earned selling
+  let lossValue = 0; // ₹ value lost (at last cost)
   let lastPurchasePrice = 0;
   let lastPurchaseAt = null;
 
@@ -29,18 +31,23 @@ export function calcStock(transactions = []) {
       saleValue += total;
     } else if (t.type === STOCK_TYPES.USAGE) {
       usedQty += qty;
+    } else if (t.type === STOCK_TYPES.LOSS) {
+      lostQty += qty;
     }
   }
 
-  const stock = purchasedQty - soldQty - usedQty;
+  const stock = purchasedQty - soldQty - usedQty - lostQty;
   const stockValue = stock * lastPurchasePrice; // approx value at last cost
+  lossValue = lostQty * lastPurchasePrice; // approx cost of what was lost
   return {
     purchasedQty,
     soldQty,
     usedQty,
+    lostQty,
     stock,
     purchaseValue,
     saleValue,
+    lossValue,
     lastPurchasePrice,
     stockValue,
   };

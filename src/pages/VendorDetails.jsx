@@ -5,7 +5,10 @@ import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import StatCard from "../components/ui/StatCard";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
-import DateRangePicker, { inRange } from "../components/ui/DateRangePicker";
+import DateRangePicker, {
+  inRange,
+  currentMonthRange,
+} from "../components/ui/DateRangePicker";
 import VendorForm from "../components/forms/VendorForm";
 import {
   getVendor,
@@ -50,7 +53,7 @@ export default function VendorDetails() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [dateRange, setDateRange] = useState(currentMonthRange());
   const [viewMode, setViewMode] = useState("batch"); // "batch" | "list"
 
   const doDelete = async () => {
@@ -324,9 +327,12 @@ const emptyLine = {
   selling_price: "",
 };
 
+const todayStr = () => new Date().toISOString().split("T")[0];
+
 function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
   const [products, setProducts] = useState([]);
   const [lines, setLines] = useState([{ ...emptyLine }]);
+  const [purchaseDate, setPurchaseDate] = useState(todayStr());
   const [discount, setDiscount] = useState("");
   const [transport, setTransport] = useState("");
   const [saving, setSaving] = useState(false);
@@ -336,6 +342,7 @@ function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
     if (open) {
       getProducts().then(setProducts).catch(() => {});
       setLines([{ ...emptyLine }]);
+      setPurchaseDate(todayStr());
       setDiscount("");
       setTransport("");
       setError("");
@@ -398,6 +405,7 @@ function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
         lines: resolved,
         discount: Number(discount) || 0,
         transport: Number(transport) || 0,
+        purchaseDate,
       });
       await onSaved();
     } catch (err) {
@@ -416,78 +424,95 @@ function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
           </div>
         )}
 
+        <div className="sm:max-w-xs">
+          <label className="mb-1 block text-xs text-gray-500">
+            Purchase date
+          </label>
+          <input
+            type="date"
+            value={purchaseDate}
+            max={todayStr()}
+            onChange={(e) => setPurchaseDate(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+
         <div className="space-y-2">
           {lines.map((l, i) => (
             <div
               key={i}
-              className="grid grid-cols-12 items-end gap-2 rounded-lg border border-gray-100 p-2"
+              className="space-y-2 rounded-lg border border-gray-100 p-2"
             >
-              <div className="col-span-12 sm:col-span-4">
-                <label className="mb-1 block text-xs text-gray-500">Product</label>
-                <select
-                  value={l.product_id}
-                  onChange={(e) => setLine(i, "product_id", e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">— Select —</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                  <option value="__new__">➕ Add new product…</option>
-                </select>
-                {l.product_id === "__new__" && (
-                  <input
-                    value={l.new_name}
-                    onChange={(e) => setLine(i, "new_name", e.target.value)}
-                    className={inputClass + " mt-1"}
-                    placeholder="New product name"
-                  />
-                )}
-              </div>
-              <div className="col-span-3 sm:col-span-2">
-                <label className="mb-1 block text-xs text-gray-500">Qty</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={l.quantity}
-                  onChange={(e) => setLine(i, "quantity", e.target.value)}
-                  className={inputClass}
-                />
-              </div>
-              <div className="col-span-4 sm:col-span-2">
-                <label className="mb-1 block text-xs text-gray-500">Cost ₹</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={l.price_per_unit}
-                  onChange={(e) => setLine(i, "price_per_unit", e.target.value)}
-                  className={inputClass}
-                />
-              </div>
-              <div className="col-span-4 sm:col-span-3">
-                <label className="mb-1 block text-xs text-gray-500">Sell ₹</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={l.selling_price}
-                  onChange={(e) => setLine(i, "selling_price", e.target.value)}
-                  className={inputClass}
-                />
-              </div>
-              <div className="col-span-1 flex justify-end">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <label className="mb-1 block text-xs text-gray-500">
+                    Product
+                  </label>
+                  <select
+                    value={l.product_id}
+                    onChange={(e) => setLine(i, "product_id", e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">— Select —</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                    <option value="__new__">➕ Add new product…</option>
+                  </select>
+                  {l.product_id === "__new__" && (
+                    <input
+                      value={l.new_name}
+                      onChange={(e) => setLine(i, "new_name", e.target.value)}
+                      className={inputClass + " mt-1"}
+                      placeholder="New product name"
+                    />
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => removeLine(i)}
-                  className="px-1 text-lg text-gray-400 hover:text-red-600"
+                  className="mt-6 shrink-0 px-1 text-lg text-gray-400 hover:text-red-600"
                   title="Remove"
                 >
                   ×
                 </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Qty</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={l.quantity}
+                    onChange={(e) => setLine(i, "quantity", e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Cost ₹</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={l.price_per_unit}
+                    onChange={(e) => setLine(i, "price_per_unit", e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Sell ₹</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={l.selling_price}
+                    onChange={(e) => setLine(i, "selling_price", e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
               </div>
             </div>
           ))}

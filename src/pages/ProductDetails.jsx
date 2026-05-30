@@ -6,8 +6,12 @@ import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import StatCard from "../components/ui/StatCard";
 import EditProductModal from "../components/products/EditProductModal";
+import StockLossModal from "../components/products/StockLossModal";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
-import DateRangePicker, { inRange } from "../components/ui/DateRangePicker";
+import DateRangePicker, {
+  inRange,
+  currentMonthRange,
+} from "../components/ui/DateRangePicker";
 import {
   getProduct,
   getStockTransactions,
@@ -27,8 +31,24 @@ const typeBadge = {
   purchase: "bg-green-100 text-green-700",
   sale: "bg-blue-100 text-blue-700",
   usage: "bg-purple-100 text-purple-700",
+  loss: "bg-red-100 text-red-700",
 };
-const typeLabel = { purchase: "Purchase", sale: "Sale", usage: "Used in service" };
+const typeLabel = {
+  purchase: "Purchase",
+  sale: "Sale",
+  usage: "Used in service",
+  loss: "Loss / damage",
+};
+
+// Which entries each clickable stat card shows. types=null → all movements.
+const HISTORY_VIEWS = {
+  stock: { title: "Stock movements", types: null },
+  value: { title: "Stock value — movements", types: null },
+  purchases: { title: "Purchases", types: [STOCK_TYPES.PURCHASE] },
+  sales: { title: "Sales", types: [STOCK_TYPES.SALE] },
+  profit: { title: "Profit (per sale)", types: [STOCK_TYPES.SALE] },
+  loss: { title: "Loss / damage", types: [STOCK_TYPES.LOSS] },
+};
 
 export default function ProductDetails() {
   const { id } = useParams();
@@ -38,11 +58,14 @@ export default function ProductDetails() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [lossOpen, setLossOpen] = useState(false);
+  const [activeImg, setActiveImg] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [dateRange, setDateRange] = useState(currentMonthRange());
+  const [historyKey, setHistoryKey] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -77,6 +100,18 @@ export default function ProductDetails() {
   const summary = calcStock(txs);
   const low = isLowStock(summary.stock, product.minimum_stock);
   const vendorPrices = pricesByVendor(txs);
+
+  // Profit margin = selling price vs last purchase cost (per unit).
+  const sellPrice = Number(product.selling_price) || 0;
+  const unitCost = Number(summary.lastPurchasePrice) || 0;
+  const marginPerUnit = sellPrice - unitCost;
+  const marginPct = sellPrice > 0 ? (marginPerUnit / sellPrice) * 100 : 0;
+
+  // Each clickable card opens this history with the matching entries.
+  const view = historyKey ? HISTORY_VIEWS[historyKey] : null;
+  const historyTxs = view
+    ? txs.filter((t) => !view.types || view.types.includes(t.type))
+    : [];
 
   const doDelete = async () => {
     setDeleteError("");
@@ -130,8 +165,15 @@ export default function ProductDetails() {
 
       <PageHeader
         title={product.name}
-        subtitle={`${product.category || "Product"} · sold in ${product.unit || "units"}`}
-        action={<Button onClick={() => setModalOpen(true)}>+ Add Stock Entry</Button>}
+        subtitle={`${product.code ? product.code + " · " : ""}${product.category || "Product"} · sold in ${product.unit || "units"}`}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setLossOpen(true)}>
+              ⚠️ Report Loss
+            </Button>
+            <Button onClick={() => setModalOpen(true)}>+ Add Stock Entry</Button>
+          </div>
+        }
       />
 
       {low && (
@@ -164,13 +206,47 @@ export default function ProductDetails() {
               </button>
             </div>
           </div>
-          {product.image_url && (
-            <img
-              src={product.image_url}
-              alt={product.name}
-              className="mb-3 h-32 w-full rounded-lg border border-gray-100 object-cover"
-            />
-          )}
+          {(() => {
+            const imgs =
+              product.image_urls && product.image_urls.length
+                ? product.image_urls
+                : product.image_url
+                  ? [product.image_url]
+                  : [];
+            if (!imgs.length) {
+              return (
+                <div className="mb-3 flex h-40 w-full items-center justify-center rounded-lg border border-dashed border-gray-200 bg-gray-50 text-4xl text-gray-300">
+                  📦
+                </div>
+              );
+            }
+            const idx = Math.min(activeImg, imgs.length - 1);
+            return (
+              <div className="mb-3">
+                <img
+                  src={imgs[idx]}
+                  alt={product.name}
+                  className="h-40 w-full rounded-lg border border-gray-100 object-cover"
+                />
+                {imgs.length > 1 && (
+                  <div className="mt-2 flex gap-2 overflow-x-auto">
+                    {imgs.map((url, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setActiveImg(i)}
+                        className={`h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 ${
+                          i === idx ? "border-indigo-500" : "border-transparent"
+                        }`}
+                      >
+                        <img src={url} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <dl className="space-y-2 text-sm">
             <Row
               label="Use"
@@ -186,6 +262,12 @@ export default function ProductDetails() {
               <Row
                 label="Used in service"
                 value={`${summary.usedQty} ${product.unit || ""}`}
+              />
+            )}
+            {summary.lostQty > 0 && (
+              <Row
+                label="Lost / damaged"
+                value={`${summary.lostQty} ${product.unit || ""}`}
               />
             )}
             <Row
@@ -225,25 +307,55 @@ export default function ProductDetails() {
             value={`${summary.stock} ${product.unit || ""}`}
             icon="📦"
             accent={low ? "red" : "indigo"}
+            onClick={() => setHistoryKey("stock")}
           />
           <StatCard
             label="Stock Value"
             value={formatCurrency(summary.stockValue)}
             icon="🏷️"
             accent="blue"
+            onClick={() => setHistoryKey("value")}
           />
           <StatCard
             label="Total Purchases"
             value={formatCurrency(summary.purchaseValue)}
             icon="🛒"
             accent="amber"
+            onClick={() => setHistoryKey("purchases")}
           />
           <StatCard
             label="Total Sales"
             value={formatCurrency(summary.saleValue)}
             icon="💰"
             accent="green"
+            onClick={() => setHistoryKey("sales")}
           />
+          <StatCard
+            label="Lost / Damaged"
+            value={`${summary.lostQty || 0} ${product.unit || ""}`}
+            icon="⚠️"
+            accent="red"
+            onClick={() => setHistoryKey("loss")}
+          >
+            <p className="mt-1 text-xs text-gray-500">
+              {summary.lostQty > 0
+                ? `approx ${formatCurrency(summary.lossValue)} value`
+                : "No losses recorded."}
+            </p>
+          </StatCard>
+          <StatCard
+            label="Profit Margin"
+            value={sellPrice > 0 ? `${marginPct.toFixed(0)}%` : "—"}
+            icon="📈"
+            accent={marginPerUnit >= 0 ? "purple" : "red"}
+            onClick={() => setHistoryKey("profit")}
+          >
+            <p className="mt-1 text-xs text-gray-500">
+              {sellPrice > 0
+                ? `${formatCurrency(marginPerUnit)}/${product.unit || "unit"}`
+                : "Set a selling price."}
+            </p>
+          </StatCard>
         </div>
       </div>
 
@@ -256,9 +368,9 @@ export default function ProductDetails() {
               Cheapest supplier first (based on lowest purchase price).
             </p>
           </div>
-          <div className="overflow-x-auto">
+          <div className="max-h-72 overflow-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+              <thead className="sticky top-0 z-10 bg-gray-50 text-xs uppercase text-gray-500 shadow-sm">
                 <tr>
                   <th className="px-4 py-3">Vendor</th>
                   <th className="px-4 py-3 text-right">Lowest</th>
@@ -306,6 +418,7 @@ export default function ProductDetails() {
               <option value={STOCK_TYPES.PURCHASE}>Purchases</option>
               <option value={STOCK_TYPES.SALE}>Sales</option>
               <option value={STOCK_TYPES.USAGE}>Used in service</option>
+              <option value={STOCK_TYPES.LOSS}>Loss / damage</option>
             </select>
             <DateRangePicker
               start={dateRange.start}
@@ -369,6 +482,14 @@ export default function ProductDetails() {
         )}
       </div>
 
+      <StockHistoryModal
+        open={!!historyKey}
+        onClose={() => setHistoryKey(null)}
+        title={view?.title || ""}
+        txs={historyTxs}
+        profitCost={historyKey === "profit" ? unitCost : null}
+      />
+
       <AddStockModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -390,6 +511,16 @@ export default function ProductDetails() {
         }}
       />
 
+      <StockLossModal
+        open={lossOpen}
+        onClose={() => setLossOpen(false)}
+        product={{ ...product, stock: summary.stock }}
+        onSaved={async () => {
+          setLossOpen(false);
+          await load();
+        }}
+      />
+
       <ConfirmDialog
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
@@ -400,6 +531,114 @@ export default function ProductDetails() {
         error={deleteError}
       />
     </div>
+  );
+}
+
+// History popup opened from a stat card. Has its own date range + scroll.
+// When profitCost is set (a per-unit cost), it shows a Profit column for sales.
+function StockHistoryModal({ open, onClose, title, txs, profitCost = null }) {
+  const [range, setRange] = useState(currentMonthRange());
+
+  useEffect(() => {
+    if (open) setRange(currentMonthRange());
+  }, [open]);
+
+  const showProfit = profitCost != null;
+  const profitOf = (t) =>
+    (Number(t.total_amount) || 0) - (Number(t.quantity) || 0) * profitCost;
+
+  const rows = txs.filter((t) => inRange(t.created_at, range.start, range.end));
+  const total = rows.reduce(
+    (s, t) => s + (showProfit ? profitOf(t) : Number(t.total_amount) || 0),
+    0
+  );
+
+  return (
+    <Modal open={open} onClose={onClose} title={title} size="lg">
+      <div className="space-y-3">
+        <DateRangePicker
+          start={range.start}
+          end={range.end}
+          onChange={setRange}
+        />
+        {rows.length === 0 ? (
+          <p className="p-8 text-center text-gray-400">
+            No entries in this range.
+          </p>
+        ) : (
+          <>
+            <div className="max-h-[24rem] overflow-auto rounded-lg border border-gray-100">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 z-10 bg-gray-50 text-xs uppercase text-gray-500 shadow-sm">
+                  <tr>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2 text-right">Qty</th>
+                    <th className="px-3 py-2 text-right">Rate</th>
+                    <th className="px-3 py-2 text-right">Total</th>
+                    {showProfit ? (
+                      <th className="px-3 py-2 text-right">Profit</th>
+                    ) : (
+                      <th className="px-3 py-2">Vendor / Note</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {rows.map((t) => (
+                    <tr key={t.id}>
+                      <td className="px-3 py-2 text-gray-600">
+                        {formatDate(t.created_at)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${typeBadge[t.type]}`}
+                        >
+                          {typeLabel[t.type] || t.type}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-700">
+                        {t.quantity}
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-700">
+                        {formatCurrency(t.price_per_unit)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold text-gray-900">
+                        {formatCurrency(t.total_amount)}
+                      </td>
+                      {showProfit ? (
+                        <td
+                          className={`px-3 py-2 text-right font-semibold ${
+                            profitOf(t) >= 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
+                          {formatCurrency(profitOf(t))}
+                        </td>
+                      ) : (
+                        <td className="px-3 py-2 text-gray-600">
+                          {t.vendor_name || t.note || "-"}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700">
+              <span>{rows.length} entr{rows.length === 1 ? "y" : "ies"}</span>
+              <span>
+                {showProfit ? "Total profit" : "Total"}: {formatCurrency(total)}
+              </span>
+            </div>
+            {showProfit && (
+              <p className="text-xs text-gray-400">
+                Profit = sale total − (qty × cost {formatCurrency(profitCost)}).
+                Cost basis is the last purchase price.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 

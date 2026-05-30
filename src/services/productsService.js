@@ -1,7 +1,7 @@
 // All Supabase calls for products & stock live here.
 import { supabase } from "./supabase";
 import { calcStock } from "../utils/productCalc";
-import { STOCK_TYPES } from "../constants";
+import { STOCK_TYPES, PRODUCT_CODE_PREFIXES } from "../constants";
 
 // Categories used on the auto-created income/expense rows.
 const PURCHASE_EXPENSE_CATEGORY = "Product purchase";
@@ -48,12 +48,49 @@ export async function getProduct(id) {
   return data;
 }
 
-export async function createProduct(product) {
+// Category → code prefix (e.g. Cable → CAB). Unknown categories use their
+// first 3 letters (padded), falling back to PRD.
+function codePrefix(category) {
+  if (category && PRODUCT_CODE_PREFIXES[category]) return PRODUCT_CODE_PREFIXES[category];
+  const letters = (category || "PRD").replace(/[^a-zA-Z]/g, "").toUpperCase();
+  return (letters.slice(0, 3) || "PRD").padEnd(3, "X");
+}
+
+// Next code for a category, e.g. "CAB001". Looks at existing codes with the
+// same prefix and adds 1. Best-effort — never throws (returns ...001 if it can't read).
+export async function generateProductCode(category) {
+  const prefix = codePrefix(category);
+  let max = 0;
   const { data, error } = await supabase
     .from("products")
-    .insert([product])
-    .select()
-    .single();
+    .select("code")
+    .ilike("code", `${prefix}%`);
+  if (!error) {
+    for (const r of data || []) {
+      const m = /^([A-Za-z]+)(\d+)$/.exec(r.code || "");
+      if (m && m[1].toUpperCase() === prefix) max = Math.max(max, Number(m[2]));
+    }
+  }
+  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+}
+
+export async function createProduct(product) {
+  const row = { ...product };
+  if (!row.code) {
+    try {
+      row.code = await generateProductCode(row.category);
+    } catch {
+      /* code column may not exist yet */
+    }
+  }
+  let { data, error } = await supabase.from("products").insert([row]).select().single();
+  // If the new columns (code / image_urls) aren't there yet, retry without them.
+  if (error) {
+    /* eslint-disable no-unused-vars */
+    const { code, image_urls, ...basic } = row;
+    /* eslint-enable no-unused-vars */
+    ({ data, error } = await supabase.from("products").insert([basic]).select().single());
+  }
   if (error) throw error;
   return data;
 }
@@ -91,7 +128,14 @@ export async function getStockTransactions(productId) {
 // Add a purchase or sale. We only ever INSERT (Business Rule 1).
 // A purchase also creates an Expense; a sale also creates an Income, so the
 // books stay in sync (per the master plan). `productName` is used in the note.
-export async function addStockTransaction(tx, { productName } = {}) {
+// opts.incomeCategory / opts.incomeNote let callers (e.g. the New Cable /
+// New Internet income flow) tag the auto-created income row instead of the
+// generic "Product sales". created_at is shared with the stock row so they
+// land on the same day.
+export async function addStockTransaction(
+  tx,
+  { productName, incomeCategory, incomeNote, paymentMethod } = {}
+) {
   const { data, error } = await supabase
     .from("stock_transactions")
     .insert([tx])
@@ -104,19 +148,100 @@ export async function addStockTransaction(tx, { productName } = {}) {
     const note = `${label} — ${tx.quantity} purchased${
       tx.vendor_name ? ` from ${tx.vendor_name}` : ""
     }`;
-    const { error: e } = await supabase
-      .from("expenses")
-      .insert([{ amount: tx.total_amount, category: PURCHASE_EXPENSE_CATEGORY, note }]);
+    const { error: e } = await supabase.from("expenses").insert([
+      {
+        amount: tx.total_amount,
+        category: PURCHASE_EXPENSE_CATEGORY,
+        note,
+        ...(tx.created_at ? { created_at: tx.created_at } : {}),
+      },
+    ]);
     if (e) throw e;
   } else if (tx.type === STOCK_TYPES.SALE) {
-    const note = `${label} — ${tx.quantity} sold`;
-    const { error: e } = await supabase
-      .from("income")
-      .insert([{ amount: tx.total_amount, category: SALE_INCOME_CATEGORY, note }]);
+    const note = incomeNote || `${label} — ${tx.quantity} sold`;
+    const row = {
+      amount: tx.total_amount,
+      category: incomeCategory || SALE_INCOME_CATEGORY,
+      note,
+      stock_tx_id: data.id, // link the money to this stock movement
+      ...(paymentMethod ? { payment_method: paymentMethod } : {}),
+      ...(tx.created_at ? { created_at: tx.created_at } : {}),
+    };
+    let { error: e } = await supabase.from("income").insert([row]);
+    // If the link column doesn't exist yet (migration not run), save without it.
+    if (e) {
+      const { stock_tx_id, ...noLink } = row;
+      ({ error: e } = await supabase.from("income").insert([noLink]));
+    }
     if (e) throw e;
   }
 
   return data;
+}
+
+// Update an existing product sale: changes the stock movement (quantity / price)
+// and its linked income row together, so stock and money stay in sync.
+export async function updateProductSale({
+  incomeId,
+  stockTxId,
+  productId,
+  quantity,
+  price,
+  note,
+  paymentMethod,
+}) {
+  const q = Number(quantity) || 0;
+  const p = Number(price) || 0;
+  const total = q * p;
+
+  const { error: e1 } = await supabase
+    .from("stock_transactions")
+    .update({
+      quantity: q,
+      price_per_unit: p,
+      total_amount: total,
+      ...(productId ? { product_id: productId } : {}),
+    })
+    .eq("id", stockTxId);
+  if (e1) throw e1;
+
+  const { error: e2 } = await supabase
+    .from("income")
+    .update({
+      amount: total,
+      note: note?.trim() || null,
+      ...(paymentMethod ? { payment_method: paymentMethod } : {}),
+    })
+    .eq("id", incomeId);
+  if (e2) throw e2;
+}
+
+// Write off stock that was damaged / missing / defective / returned.
+// Reduces stock (a 'loss' transaction) and creates NO income or expense — the
+// money was already spent when it was purchased. The reason is kept in `note`
+// so losses can be monitored separately from sales and service usage.
+export async function recordStockLoss({
+  productId,
+  productName,
+  quantity,
+  reason,
+  note,
+  date = "",
+}) {
+  const createdAt = purchaseTimestamp(date);
+  const fullNote = [reason, note?.trim()].filter(Boolean).join(" — ");
+  return addStockTransaction(
+    {
+      product_id: productId,
+      type: STOCK_TYPES.LOSS,
+      quantity: Number(quantity) || 0,
+      price_per_unit: 0,
+      total_amount: 0,
+      note: fullNote || reason || "Stock loss",
+      ...(createdAt ? { created_at: createdAt } : {}),
+    },
+    { productName }
+  );
 }
 
 // Subcategory / brand values used before, to suggest again (e.g. TCCL, Airtel).
@@ -155,13 +280,31 @@ export async function uploadProductImage(file) {
 // Inserts a purchase row per line, ONE combined expense (subtotal − discount +
 // transport), and refreshes each product's latest selling price.
 // lines: [{ product_id, quantity, price_per_unit, selling_price }]
+// Turn a date input value ("YYYY-MM-DD") into a timestamp. We keep the current
+// time-of-day so two separate orders on the same date stay in distinct batches.
+// Empty value → undefined, letting the DB default created_at to now().
+function purchaseTimestamp(dateStr) {
+  if (!dateStr) return undefined;
+  const now = new Date();
+  const d = new Date(dateStr);
+  d.setHours(
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+    now.getMilliseconds()
+  );
+  return d.toISOString();
+}
+
 export async function addBulkPurchase({
   vendorId,
   vendorName,
   lines,
   discount = 0,
   transport = 0,
+  purchaseDate = "",
 }) {
+  const createdAt = purchaseTimestamp(purchaseDate);
   const rows = lines.map((l) => ({
     product_id: l.product_id,
     type: STOCK_TYPES.PURCHASE,
@@ -171,6 +314,7 @@ export async function addBulkPurchase({
     total_amount: (Number(l.quantity) || 0) * (Number(l.price_per_unit) || 0),
     vendor_id: vendorId || null,
     vendor_name: vendorName || null,
+    ...(createdAt ? { created_at: createdAt } : {}),
   }));
 
   const { error } = await supabase.from("stock_transactions").insert(rows);
@@ -193,6 +337,7 @@ export async function addBulkPurchase({
       note: `Bulk purchase${vendorName ? ` from ${vendorName}` : ""}: ${
         lines.length
       } item(s)${extras ? ` (${extras})` : ""}`,
+      ...(createdAt ? { created_at: createdAt } : {}),
     },
   ]);
   if (e2) throw e2;

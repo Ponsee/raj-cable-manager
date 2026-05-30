@@ -37,7 +37,7 @@ export default function Products() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [form, setForm] = useState(emptyProductForm);
-  const [imageFile, setImageFile] = useState(null);
+  const [imageFiles, setImageFiles] = useState([]);
   const [subcats, setSubcats] = useState([]);
   const [cats, setCats] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -68,21 +68,23 @@ export default function Products() {
     setError("");
     setSaving(true);
     try {
-      let image_url = null;
-      if (imageFile) image_url = await uploadProductImage(imageFile);
+      const image_urls = [];
+      for (const f of imageFiles) image_urls.push(await uploadProductImage(f));
       await createProduct({
         name: form.name.trim(),
+        code: form.code?.trim() || undefined,
         product_type: form.product_type,
         category: form.category,
         subcategory: form.subcategory.trim() || null,
         unit: form.unit,
         selling_price: Number(form.selling_price) || null,
         minimum_stock: Number(form.minimum_stock) || 0,
-        image_url,
+        image_url: image_urls[0] || null,
+        image_urls: image_urls.length ? image_urls : null,
       });
       setModalOpen(false);
       setForm(emptyProductForm);
-      setImageFile(null);
+      setImageFiles([]);
       await load();
     } catch (e) {
       setError(e.message);
@@ -119,8 +121,6 @@ export default function Products() {
       p.subcategory?.toLowerCase().includes(search.toLowerCase());
     return matchesCategory && matchesType && matchesSearch;
   });
-
-  const imagePreview = imageFile ? URL.createObjectURL(imageFile) : form.image_url;
 
   return (
     <div>
@@ -212,7 +212,14 @@ export default function Products() {
                             </div>
                           )}
                           <div className="min-w-0">
-                            <p className="font-medium text-gray-900">{p.name}</p>
+                            <p className="font-medium text-gray-900">
+                              {p.name}
+                              {p.code && (
+                                <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500">
+                                  {p.code}
+                                </span>
+                              )}
+                            </p>
                             {p.subcategory && (
                               <p className="truncate text-xs text-gray-400">
                                 {p.subcategory}
@@ -291,8 +298,8 @@ export default function Products() {
             onChange={handleChange}
             categorySuggestions={cats}
             subcategorySuggestions={subcats}
-            onImageFile={setImageFile}
-            imagePreview={imagePreview}
+            imageFiles={imageFiles}
+            onImageFilesChange={setImageFiles}
           />
 
           <div className="flex justify-end gap-2 pt-2">

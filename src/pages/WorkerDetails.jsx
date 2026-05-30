@@ -22,30 +22,13 @@ import {
   WORK_TYPES,
 } from "../constants";
 import { formatCurrency, formatDate, ordinal } from "../utils/format";
+import DateRangePicker, {
+  inRange,
+  currentMonthRange,
+} from "../components/ui/DateRangePicker";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
-
-// Date Range Picker - standalone component
-function DateRangePicker({ start, end, onChange }) {
-  return (
-    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-      <input
-        type="date"
-        value={start}
-        onChange={(e) => onChange({ start: e.target.value, end })}
-        className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm sm:flex-none"
-      />
-      <span className="text-gray-500">to</span>
-      <input
-        type="date"
-        value={end}
-        onChange={(e) => onChange({ start, end: e.target.value })}
-        className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm sm:flex-none"
-      />
-    </div>
-  );
-}
 
 const typeBadge = {
   advance: "bg-amber-100 text-amber-700",
@@ -142,10 +125,7 @@ export default function WorkerDetails() {
   const [bonusModalOpen, setBonusModalOpen] = useState(false);
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
-  const [dateFilter, setDateFilter] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0],
-    end: new Date().toISOString().split("T")[0],
-  });
+  const [dateFilter, setDateFilter] = useState(currentMonthRange());
 
   const load = async () => {
     setLoading(true);
@@ -190,10 +170,9 @@ export default function WorkerDetails() {
     : 0;
 
   // Filter transactions by date
-  const filteredTxs = txs.filter((t) => {
-    const date = new Date(t.created_at).toISOString().split("T")[0];
-    return date >= dateFilter.start && date <= dateFilter.end;
-  });
+  const filteredTxs = txs.filter((t) =>
+    inRange(t.created_at, dateFilter.start, dateFilter.end)
+  );
 
   return (
     <div>
@@ -712,7 +691,7 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
 
     setSaving(true);
     try {
-      await addWorkerTransaction(payload);
+      await addWorkerTransaction(payload, { workerName: worker.name });
       // Increment also bumps the worker's stored monthly salary going forward.
       if (type === "increment") {
         await updateWorker(worker.id, { monthly_salary: payload.calculated_amount });
@@ -1017,10 +996,6 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
 // One reusable history popup for Advance / Salary / Bonus / Increment / Balance.
 // It keeps its OWN date range (independent of the page's filter) so changing the
 // range here never affects the main page.
-function isoDate(ts) {
-  return new Date(ts).toISOString().split("T")[0];
-}
-
 function HistoryModal({
   open,
   onClose,
@@ -1034,21 +1009,16 @@ function HistoryModal({
   totalLabel = "Total",
   emptyText = "No records in this period.",
 }) {
-  const today = new Date().toISOString().split("T")[0];
-  const [range, setRange] = useState({ start: today, end: today });
+  const [range, setRange] = useState(currentMonthRange());
 
-  // When opened, default to "show everything of this type" (earliest → today).
+  // When opened, default to the current month (same as the page + other modules).
   useEffect(() => {
-    if (open) {
-      const dates = txs.filter(filter).map((t) => isoDate(t.created_at)).sort();
-      setRange({ start: dates[0] || today, end: today });
-    }
+    if (open) setRange(currentMonthRange());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const items = txs.filter(
-    (t) =>
-      filter(t) && isoDate(t.created_at) >= range.start && isoDate(t.created_at) <= range.end
+    (t) => filter(t) && inRange(t.created_at, range.start, range.end)
   );
   const total = items.reduce((s, t) => s + (Number(amount(t)) || 0), 0);
 

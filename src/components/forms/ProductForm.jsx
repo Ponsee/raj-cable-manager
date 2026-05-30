@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PRODUCT_CATEGORIES, PRODUCT_TYPES } from "../../constants";
+import ProductImages from "../products/ProductImages";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -10,25 +11,28 @@ export const PRODUCT_UNITS = ["Piece", "Meter", "Roll", "Box", "Set", "Pair"];
 // Blank form values for a new product.
 export const emptyProductForm = {
   name: "",
+  code: "",
   product_type: PRODUCT_TYPES.SHOP,
   category: PRODUCT_CATEGORIES[0],
   subcategory: "",
   unit: PRODUCT_UNITS[0],
   selling_price: "",
   minimum_stock: "",
-  image_url: "",
 };
 
 // Shared fields for both "Add product" and "Edit product".
-// Parent owns the state (`form`) + submit. Image: parent passes `onImageFile`
-// (called with the chosen File) and `imagePreview` (URL to show).
+// Parent owns the state (`form`) + submit. Images: parent passes the existing
+// `imageUrls` + newly-picked `imageFiles` and their setters (see ProductImages).
 export default function ProductForm({
   form,
   onChange,
   categorySuggestions = [],
   subcategorySuggestions = [],
-  onImageFile,
-  imagePreview,
+  imageUrls = [],
+  imageFiles = [],
+  onImageUrlsChange,
+  onImageFilesChange,
+  codeHint,
 }) {
   const [addingCat, setAddingCat] = useState(false);
   const allCategories = [
@@ -48,6 +52,24 @@ export default function ProductForm({
           className={inputClass}
           placeholder="e.g. TCCL remote"
         />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          Product code
+        </label>
+        <input
+          name="code"
+          value={form.code || ""}
+          onChange={onChange}
+          className={inputClass}
+          placeholder={codeHint || "Auto (e.g. CAB001)"}
+        />
+        <p className="mt-1 text-xs text-gray-400">
+          {codeHint
+            ? `Leave blank to auto-assign ${codeHint}.`
+            : "Leave blank and we'll create one from the category (e.g. CAB001)."}
+        </p>
       </div>
 
       <div>
@@ -181,30 +203,12 @@ export default function ProductForm({
         />
       </div>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium text-gray-700">
-          Photo
-        </label>
-        <div className="flex items-center gap-3">
-          {imagePreview ? (
-            <img
-              src={imagePreview}
-              alt="preview"
-              className="h-16 w-16 rounded-lg border border-gray-200 object-cover"
-            />
-          ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-gray-300 text-xl text-gray-300">
-              📷
-            </div>
-          )}
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => onImageFile?.(e.target.files?.[0] || null)}
-            className="text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
-          />
-        </div>
-      </div>
+      <ProductImages
+        urls={imageUrls}
+        files={imageFiles}
+        onUrlsChange={onImageUrlsChange}
+        onFilesChange={onImageFilesChange}
+      />
     </div>
   );
 }

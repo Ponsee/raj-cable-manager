@@ -1,12 +1,18 @@
-import PageHeader from "../components/ui/PageHeader";
+import LedgerPage from "../components/finance/LedgerPage";
+import { EXPENSE_CATEGORIES } from "../constants";
 
 export default function Expense() {
   return (
-    <div>
-      <PageHeader title="Expense" subtitle="Money going out" />
-      <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center text-gray-400">
-        Expense module — coming in Module 4.
-      </div>
-    </div>
+    <LedgerPage
+      config={{
+        table: "expenses",
+        title: "Expense",
+        subtitle: "Money going out",
+        addLabel: "+ Add Expense",
+        accent: "red",
+        totalLabel: "Total Expense",
+        categories: EXPENSE_CATEGORIES,
+      }}
+    />
   );
 }

@@ -1,12 +1,29 @@
-// Reusable title row used at the top of every page.
+// Reusable title row used at the top of every page — now MUI Typography.
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+
 export default function PageHeader({ title, subtitle, action }) {
   return (
-    <div className="mb-6 flex items-start justify-between gap-4">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-gray-500">{subtitle}</p>}
-      </div>
+    <Box
+      sx={{
+        mb: 3,
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 2,
+      }}
+    >
+      <Box>
+        <Typography variant="h5" sx={{ fontWeight: 700, color: "text.primary" }}>
+          {title}
+        </Typography>
+        {subtitle && (
+          <Typography variant="body2" sx={{ mt: 0.5, color: "text.secondary" }}>
+            {subtitle}
+          </Typography>
+        )}
+      </Box>
       {action}
-    </div>
+    </Box>
   );
 }
