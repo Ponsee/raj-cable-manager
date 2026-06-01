@@ -183,7 +183,7 @@ export default function ScanToSellModal({ open, onClose, onSold }) {
             <Button type="button" variant="secondary" onClick={() => setStep("scan")}>
               Scan again
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" loading={saving}>
               {saving ? "Saving..." : "Record Sale"}
             </Button>
           </div>

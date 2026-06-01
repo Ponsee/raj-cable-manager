@@ -7,6 +7,7 @@ const LABELS = {
   workers: "Workers",
   products: "Products",
   vendors: "Vendors",
+  "purchase-plan": "Buy Plan",
   income: "Income",
   expense: "Expense",
   reports: "Reports",

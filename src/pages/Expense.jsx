@@ -12,6 +12,18 @@ export default function Expense() {
         accent: "red",
         totalLabel: "Total Expense",
         categories: EXPENSE_CATEGORIES,
+        // Auto-created rows — delete them from their source (purchase / worker),
+        // not here, so stock & worker records stay in sync.
+        lockedCategories: [
+          "Product purchase",
+          "Staff salary",
+          "Staff payment",
+          "Worker advance",
+          "Staff bonus",
+          "Worker expense",
+          "Contract work",
+        ],
+        lockedHint: "Added automatically — delete it from the purchase or worker entry.",
       }}
     />
   );

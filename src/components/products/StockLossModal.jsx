@@ -11,6 +11,7 @@ import Modal from "../ui/Modal";
 import Button from "../ui/Button";
 import TextField from "@mui/material/TextField";
 import MenuItem from "@mui/material/MenuItem";
+import Autocomplete from "@mui/material/Autocomplete";
 import Alert from "@mui/material/Alert";
 import Stack from "@mui/material/Stack";
 import { recordStockLoss } from "../../services/productsService";
@@ -89,22 +90,29 @@ export default function StockLossModal({
             any income or expense.
           </Alert>
 
-          <TextField
-            select
-            label="Product"
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-            disabled={fixed}
-            fullWidth
-            size="small"
-          >
-            <MenuItem value="">— Select —</MenuItem>
-            {list.map((p) => (
-              <MenuItem key={p.id} value={p.id}>
-                {p.name} ({p.stock} {p.unit || "in stock"})
-              </MenuItem>
-            ))}
-          </TextField>
+          {fixed ? (
+            <TextField
+              label="Product"
+              value={product.name}
+              disabled
+              fullWidth
+              size="small"
+            />
+          ) : (
+            <Autocomplete
+              options={list}
+              value={list.find((p) => p.id === productId) || null}
+              onChange={(_e, val) => setProductId(val?.id || "")}
+              getOptionLabel={(p) =>
+                p?.name ? `${p.name} (${p.stock} ${p.unit || "in stock"})` : ""
+              }
+              isOptionEqualToValue={(o, v) => o.id === v.id}
+              size="small"
+              renderInput={(params) => (
+                <TextField {...params} label="Product" placeholder="Search…" />
+              )}
+            />
+          )}
 
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
@@ -157,7 +165,7 @@ export default function StockLossModal({
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" variant="danger" disabled={saving}>
+            <Button type="submit" variant="danger" loading={saving}>
               {saving ? "Saving..." : "Report Loss"}
             </Button>
           </Stack>

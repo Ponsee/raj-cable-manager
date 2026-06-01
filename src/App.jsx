@@ -12,6 +12,7 @@ import Products from "./pages/Products";
 import ProductDetails from "./pages/ProductDetails";
 import Vendors from "./pages/Vendors";
 import VendorDetails from "./pages/VendorDetails";
+import PurchasePlan from "./pages/PurchasePlan";
 import Income from "./pages/Income";
 import Expense from "./pages/Expense";
 import Reports from "./pages/Reports";
@@ -54,6 +55,14 @@ function App() {
           <Route path="/products/:id" element={<ProductDetails />} />
           <Route path="/vendors" element={<Vendors />} />
           <Route path="/vendors/:id" element={<VendorDetails />} />
+          <Route
+            path="/purchase-plan"
+            element={
+              <ProtectedRoute requireAdmin>
+                <PurchasePlan />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/income" element={<Income />} />
           <Route path="/expense" element={<Expense />} />
           <Route path="/reports" element={<Reports />} />

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import CircularProgress from "@mui/material/CircularProgress";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
 
@@ -120,8 +121,9 @@ export default function ResetPassword() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-lg bg-indigo-600 py-2.5 font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 py-2.5 font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
+                {loading && <CircularProgress size={16} color="inherit" />}
                 {loading ? "Saving..." : "Update password"}
               </button>
             </form>

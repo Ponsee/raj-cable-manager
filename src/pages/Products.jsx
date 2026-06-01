@@ -15,7 +15,7 @@ import {
   getCategorySuggestions,
   uploadProductImage,
 } from "../services/productsService";
-import { PRODUCT_CATEGORIES, PRODUCT_TYPES, PRODUCT_TYPE_LABELS } from "../constants";
+import { PRODUCT_CATEGORIES, PRODUCT_TYPES, productTypeLabel } from "../constants";
 import { formatCurrency } from "../utils/format";
 import { isLowStock } from "../utils/productCalc";
 
@@ -115,7 +115,9 @@ export default function Products() {
   const filtered = products.filter((p) => {
     const matchesCategory =
       categoryFilter === "all" || p.category === categoryFilter;
-    const matchesType = typeFilter === "all" || p.product_type === typeFilter;
+    const matchesType =
+      typeFilter === "all" ||
+      (p.product_type || "").split(",").includes(typeFilter);
     const matchesSearch =
       p.name?.toLowerCase().includes(search.toLowerCase()) ||
       p.subcategory?.toLowerCase().includes(search.toLowerCase());
@@ -229,7 +231,7 @@ export default function Products() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {PRODUCT_TYPE_LABELS[p.product_type] || "-"}
+                        {productTypeLabel(p.product_type)}
                       </td>
                       <td className="px-4 py-3 text-gray-600">{p.category || "-"}</td>
                       <td className="px-4 py-3 text-right">
@@ -310,7 +312,7 @@ export default function Products() {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" loading={saving}>
               {saving ? "Saving..." : "Save Product"}
             </Button>
           </div>

@@ -27,13 +27,19 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 | `2026-05-30_income_payment_and_stock_loss.sql` | `income.payment_method` (Cash/Online) + `idx_stock_tx_type` |
 | `2026-05-30_income_stock_link.sql` | `income.stock_tx_id` → links a product sale to its stock movement |
 | `2026-05-30_product_code_images.sql` | `products.code` (easy ID) + `products.image_urls` (multi-image) |
+| `2026-05-30_product_images_bucket.sql` | creates the `product-images` storage bucket + upload/read policies |
+| `2026-05-30_purchase_discount_transport.sql` | `stock_transactions.discount` + `transport` (per bulk order) |
+| `2026-05-30_purchase_expense_link.sql` | `stock_transactions.expense_id` → links a purchase to its expense (for batch delete) |
+| `2026-05-30_worker_tx_expense_link.sql` | `worker_transactions.expense_id` → links worker pay to its expense (for delete) |
 
-**Storage:** create a **public** bucket named **`product-images`**
-(Storage → New bucket → Public: ON) for product photo uploads.
+**Storage:** the `product-images` bucket is created by the migration above
+(running `2026-05-30_product_images_bucket.sql` in the SQL Editor). You can also
+create it manually: Storage → New bucket → name `product-images` → Public: ON,
+but then you still need upload policies — running the migration is easier.
 
 **npm packages added:** `qrcode.react`, `html5-qrcode`, **`@mui/material`,
 `@mui/icons-material`, `@emotion/react`, `@emotion/styled`,
-`@mui/x-date-pickers`, `dayjs`** (run `npm install` if pulling fresh).
+`@mui/x-date-pickers`, `@mui/x-charts`, `dayjs`** (run `npm install` if pulling fresh).
 
 > The app degrades gracefully if a migration hasn't been run yet (e.g. income
 > still loads without `payment_method`/`stock_tx_id`; products save without
@@ -135,6 +141,17 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
   only (no back-fill of past worker pay).
 - ⚠️ Don't also add salaries manually on the Expense page — that would double-count.
 
+### Delete a worker transaction (with expense reversal)
+- Each history row has a 🗑️ delete (with confirm). `deleteWorkerTransaction(tx)`
+  removes the worker entry **and** its linked auto-expense (`worker_transactions.expense_id`),
+  so balances recalculate and the Expense ledger stays in sync. Entries created
+  before the link migration delete the worker row but not the old expense.
+
+### Auto-note saves reliably
+- The note is built by `buildNote()` and saved **at submit time** (not only via the
+  live effect), so the auto-generated note always persists. History shows the note
+  for every type (falls back to the computed description for Work only when blank).
+
 ### UI
 - Add Transaction: type buttons on one responsive row; auto-filled note for every type.
 - One reusable `HistoryModal` per stat card (Salary / Bonus / Increment / Advance /
@@ -147,12 +164,15 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 ## 📦 Products module
 
 ### Product fields
-- `code` (easy ID), `name`, `product_type` (**Shop** / **Service material**),
-  `category`, `subcategory` (free-text brand, e.g. TCCL/Airtel), `unit`,
+- `code` (easy ID), `name`, `product_type` (**one or more** of Shop / Service),
+  `category`, `subcategory` (brand, e.g. TCCL/Airtel), `unit`,
   `selling_price`, `minimum_stock` (low-stock alert), `image_url` (primary),
   `image_urls` (all photos).
-- **Category** is an add-new combobox (defaults + used categories + "➕ Add new…").
-- **Subcategory** is free-text with auto-suggestions.
+- **Product use is multi-select** (MUI ToggleButtonGroup) — a product can be both
+  Shop + Service. Stored comma-joined (e.g. `shop,service`); `productTypeLabel()`
+  renders the label(s); the list filter matches with `.split(",").includes()`.
+- **Category & Sub-category** are both **MUI Autocomplete** comboboxes (free-solo):
+  a dropdown of existing values you can pick, or type a new one.
 - Add/Edit use shared `components/forms/ProductForm.jsx`; edit dialog is the shared
   `components/products/EditProductModal.jsx` (used by both list and details).
 
@@ -201,9 +221,23 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 - Editable directly in the product form; shown in the profile + stock history
   (`· sell @ ₹X`).
 
-### Price by vendor
-- Product details shows each vendor's **lowest + latest** purchase price for that
-  product, cheapest first (green "cheapest" tag).
+### Price history chart
+- Product details shows a **MUI X LineChart** (`@mui/x-charts`) of **buy price**
+  (cost) vs **sell price** per purchase over time. Plotted on an index x-axis
+  (dates as labels) so same-day purchases don't collapse; marks shown; the sell
+  line falls back to the product's current selling price when a purchase didn't
+  record one.
+
+### Price by vendor (+ cross-navigation)
+- Product details shows each vendor's **lowest + latest** purchase price, sorted
+  **cheapest first by the LATEST price** (green "cheapest" tag).
+- Each vendor name **links to that vendor's page** (`/vendors/:id`) — using the
+  stored `vendor_id`, or matched by name (case-insensitive) against the vendor
+  list when an old purchase has no id.
+- Reverse: vendor purchase history links each product back to `/products/:id`.
+
+### Product ID shown
+- The `code` shows in the page header and as a **Product ID** row in the details.
 
 ### QR + scan-to-sell
 - Each product page renders a **QR** (encodes the product id) with **Print label**.
@@ -230,8 +264,16 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
   product (with "➕ Add new product" inline), qty, cost, sell price per line;
   order-level **Discount** and **Transport cost**; records one purchase row per
   line + one combined **Expense** (`subtotal − discount + transport`).
-- **Purchase history**: **By batch** view (one bulk order = one batch block with
-  its total) or **All items**, plus a **date-range filter**.
+  - `discount`/`transport` are stored on the **first row** of the batch (others 0)
+    so summing a batch is correct; each purchase row is linked to its `expense_id`.
+- **Purchase history**: **By batch** view (one order = one block, with a
+  **Subtotal → −Discount → +Transport → Net** breakdown) or **All items**, plus a
+  **date-range filter**. Product names link back to `/products/:id`.
+- **Delete a purchase batch** (🗑️ on a batch): `deletePurchaseBatch(items)` removes
+  the **stock movements AND the linked expense** together — so product stock,
+  vendor history, and expenses all stay in sync (only fully for purchases made
+  after the `expense_id` migration). ⚠️ Can push stock negative if some was
+  already sold.
 
 ---
 
@@ -245,6 +287,11 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
     products** (each qty + price), optional **charge** (e.g. install). Priced
     item → **Sale** (income + stock out); ₹0 item → **Used** (stock out, no income).
   - `provider` (Internet Recharge) → provider (`INTERNET_PROVIDERS`, add-new) + amount.
+- Source order (most-used first): **Cable Collection · Shop Collection · Daily
+  Collection** · New Cable · New Internet · Internet Recharge · Other (entry 1
+  defaults to Cable Collection).
+- Device-line **product pickers are searchable MUI Autocomplete** (Add Income +
+  the Report Loss modal) — type to find a product.
 - Over-sell guard aggregates product quantities across the whole batch.
 
 ### Payment method (Cash / Online)
@@ -260,10 +307,12 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 ### History, cards, filters
 - **Daily** view groups entries by day; each day header shows **💵 cash · 📱 online ·
   total** and a 🗑️ **batch-delete**. **All** view is a flat table. Both scroll.
-- Stat cards: Today's collection · Total (range) · **Cash** · **Online** ·
-  Avg/day · **Days with income**.
-- Filters: search, **payment** (All/Cash/Online), shared **DateRangePicker**,
-  Export CSV. Per-row 🗑️ delete too.
+- The shared **DateRangePicker** sits in the page header (next to Add Income); all
+  cards + the breakdown are computed for that range.
+- Stat cards: Today's collection · Total (range) · **This vs last month** (▲/▼ %,
+  up = green for income) · **Cash** · **Online** · Avg/day · **Days with income**.
+- **By-source breakdown** list (each source + total + % bar) for the range.
+- Filters: search, **payment** (All/Cash/Online), Export CSV. Per-row 🗑️ delete too.
 
 ### Product sale ↔ stock link & edit/delete
 - Each product-sale income row links to its stock movement via `income.stock_tx_id`
@@ -279,15 +328,43 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 
 ## 🔴 Expense module (`pages/Expense.jsx` via `components/finance/LedgerPage.jsx`)
 
-- Shared **LedgerPage** ledger (table `expenses`): search, category filter,
-  DateRangePicker, Export CSV, scrollable table, add/delete (via `ConfirmDialog`).
-- **Cards:** Total Expense · Today · Avg/day · **Top category** · Entries.
+- Shared **LedgerPage** ledger (table `expenses`). The **DateRangePicker** is in
+  the header (next to Add Expense); all cards + breakdown use that range.
+- **Cards:** Total Expense · **This vs last month** (▲/▼ %, up = red for expense) ·
+  Today · Avg/day · **Top category** · Entries.
+- **By-category breakdown** list (each category + total + % bar) for the range.
+- Filter row = search + category filter + **Export CSV** (all on one line).
+- **Category** in Add Expense is a **MUI Autocomplete** combobox (pick or type new);
+  defaults include Staff salary, Product purchase, Electricity, Fuel, **Water,
+  Parcel, For Home**, Office expenses, Other.
 - **Auto-populated from:** product **purchases** (single + bulk) and **worker pay**
   (salary/advance/payment/bonus/petrol/contract-work — see Workers). Plus any
   manual entries (Electricity, Fuel, Office, etc.).
+- **Auto rows (🔒):** auto-created rows (Product purchase / worker categories,
+  config `lockedCategories`) are marked **🔒 auto**. They can still be deleted, but
+  the confirm shows a **warning** to delete from the source (purchase batch / worker
+  entry) instead — so stock & worker records stay in sync. (The warning escape-hatch
+  lets you clean up orphaned auto-expenses left by pre-link deletes.)
 - `services/financeService.js`: `getEntries` (income also selects
   `payment_method`, `stock_tx_id`, with graceful fallbacks), `addEntry`,
   `updateEntry`, `deleteEntry`, `deleteIncomeEntry`, `deleteIncomeBatch`.
+
+---
+
+## 🧮 Purchase Plan (`pages/PurchasePlan.jsx`, `/purchase-plan`, admin only)
+
+A "what to buy this month" budget analyzer. Service `getPurchasePlan({ usageDays,
+bufferDays })` computes per product:
+- recent **usage** (sold + used + lost over `usageDays`, default 60) → per-day rate,
+- **usage-based** reorder = `perDay × bufferDays − stock`,
+- **low-stock top-up** = bring stock at/below min up to `2 × min`,
+- **suggested qty** = the larger of the two; **est. cost** = qty × last purchase price.
+- Totals: **Suggested budget**, **Bought this month**, **Remaining to buy**
+  (= suggested − bought this month), **Last month spent**.
+
+UI: a "Keep stock for 1/2/3 months" selector (sets `bufferDays`), an "only items to
+buy" toggle, the 4 budget cards, and a sorted per-product table (usage qty, low
+top-up, suggested, est. cost; Low items flagged). Nav: **🧮 Buy Plan** (adminOnly).
 
 ---
 
@@ -296,15 +373,16 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 | File | Purpose |
 |---|---|
 | `theme.js` + `main.jsx` | MUI theme (indigo) + `ThemeProvider` / `LocalizationProvider` |
-| `components/ui/Button.jsx` | MUI Button (variants primary/secondary/danger/ghost) |
+| `components/ui/Button.jsx` | MUI Button (variants primary/secondary/danger/ghost); `loading` prop shows a spinner + disables — used on every save/confirm button app-wide |
 | `components/ui/Modal.jsx` | MUI Dialog wrapper (same `open/onClose/title/size` API) |
 | `components/ui/StatCard.jsx` | MUI Paper card; accents green/red/blue/amber/indigo/purple/orange |
 | `components/ui/PageHeader.jsx` | MUI Typography title row |
 | `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
 | `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / This year / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()` |
-| `components/finance/LedgerPage.jsx` | Shared money ledger (used by Expense) |
+| `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows |
 | `components/products/StockLossModal.jsx` | Report loss/damage (Income + Product Details) |
 | `components/products/ProductImages.jsx` | Multi-image picker (upload + camera, max 5) |
+| `pages/PurchasePlan.jsx` | "What to buy this month" budget analyzer (`@mui/x-charts` not used here; uses `getPurchasePlan`) |
 | `components/forms/WorkerForm.jsx` | Shared worker add/edit fields + pricing helpers |
 | `components/forms/ProductForm.jsx` | Shared product add/edit fields (code + images) |
 | `components/forms/VendorForm.jsx` | Shared vendor add/edit fields |
@@ -319,5 +397,13 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 2. Stock & worker balances are always computed from transactions.
 3. Purchases auto-create Expenses; Sales auto-create Income; worker cash-outs
    auto-create Expenses; product loss reduces stock with no money entry.
-4. Deletes always go through a confirmation dialog. Deleting a product-sale
-   income (row or whole day) also removes its stock movement, restoring stock.
+4. Deletes always go through a confirmation dialog, and **stay consistent**:
+   - Deleting a product-sale **income** (row/day) removes its stock movement → stock restored.
+   - Deleting a **purchase batch** removes its stock movements + linked expense.
+   - Deleting a **worker transaction** removes its linked auto-expense too.
+   - Auto-created expense rows are marked 🔒 and warn before delete (prefer deleting
+     from the source).
+   (Cross-record consistency applies to records created after the `stock_tx_id` /
+   `expense_id` link migrations; older ones degrade gracefully.)
+5. Every save/confirm action shows a **loading spinner** (shared `Button` `loading`)
+   and disables the button to prevent double-submits.

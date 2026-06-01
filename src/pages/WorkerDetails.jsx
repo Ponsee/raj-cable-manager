@@ -9,11 +9,16 @@ import WorkerForm, {
   buildPricing,
   pricingToFormFields,
 } from "../components/forms/WorkerForm";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
+import DeleteIcon from "@mui/icons-material/DeleteOutlined";
 import {
   getWorker,
   getWorkerTransactions,
   addWorkerTransaction,
   updateWorker,
+  deleteWorkerTransaction,
 } from "../services/workersService";
 import { calcBalance, calcSplicing, describeWork } from "../utils/workerCalc";
 import {
@@ -126,6 +131,8 @@ export default function WorkerDetails() {
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
   const [dateFilter, setDateFilter] = useState(currentMonthRange());
+  const [confirmTx, setConfirmTx] = useState(null); // transaction to delete
+  const [deletingTx, setDeletingTx] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -144,6 +151,17 @@ export default function WorkerDetails() {
   useEffect(() => {
     load();
   }, [id]);
+
+  const doDeleteTx = async () => {
+    setDeletingTx(true);
+    try {
+      await deleteWorkerTransaction(confirmTx);
+      setConfirmTx(null);
+      await load();
+    } finally {
+      setDeletingTx(false);
+    }
+  };
 
   if (loading) return <p className="text-gray-400">Loading worker...</p>;
   if (!worker) {
@@ -346,6 +364,7 @@ export default function WorkerDetails() {
                   <th className="px-4 py-3">Type</th>
                   <th className="px-4 py-3">Details</th>
                   <th className="px-4 py-3 text-right">Amount</th>
+                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -367,12 +386,24 @@ export default function WorkerDetails() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {t.type === TRANSACTION_TYPES.WORK
-                          ? describeWork(t)
-                          : t.note || "-"}
+                        {t.note ||
+                          (t.type === TRANSACTION_TYPES.WORK
+                            ? describeWork(t)
+                            : "-")}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-gray-900">
                         {formatCurrency(amount)}
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <Tooltip title="Delete entry">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => setConfirmTx(t)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </td>
                     </tr>
                   );
@@ -495,6 +526,16 @@ export default function WorkerDetails() {
           await load();
         }}
       />
+
+      <ConfirmDialog
+        open={!!confirmTx}
+        onClose={() => setConfirmTx(null)}
+        onConfirm={doDeleteTx}
+        title="Delete this transaction?"
+        message="This removes the worker entry and, if it created an expense, that expense too. Balances recalculate. This cannot be undone."
+        confirmLabel="Delete"
+        loading={deletingTx}
+      />
     </div>
   );
 }
@@ -564,8 +605,8 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // Auto-fill the note from whatever is entered — for every type, both kinds.
-  useEffect(() => {
+  // Build the auto note from whatever is entered — for every type.
+  const buildNote = () => {
     const parts = [];
     const monthYear = salaryDate
       ? new Date(salaryDate).toLocaleString("en-IN", {
@@ -602,8 +643,13 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
       parts.push(purpose);
       if (Number(amount) > 0) parts.push(formatCurrency(Number(amount)));
     }
+    return parts.join(", ");
+  };
 
-    if (parts.length > 0) setNote(parts.join(", "));
+  // Keep the note field auto-filled as the user types (they can still edit it).
+  useEffect(() => {
+    const n = buildNote();
+    if (n) setNote(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, salaryDate, leaveDays, amount, joints, newSalary, purpose]);
 
@@ -623,7 +669,14 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
     e.preventDefault();
     setError("");
 
-    const payload = { worker_id: worker.id, type, note: note.trim() || null };
+    // Use the typed note, or build it now so the auto-note always saves even if
+    // the effect hadn't run yet (e.g. saving immediately after typing).
+    const finalNote = note.trim() || buildNote();
+    const payload = {
+      worker_id: worker.id,
+      type,
+      note: finalNote || null,
+    };
 
     if (type === "salary") {
       // Employee salary: monthly salary - leave deduction - advance to reduce
@@ -982,7 +1035,7 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>
@@ -1139,7 +1192,7 @@ function EditWorkerModal({ open, onClose, worker, onSaved }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>

@@ -148,15 +148,27 @@ export async function addStockTransaction(
     const note = `${label} — ${tx.quantity} purchased${
       tx.vendor_name ? ` from ${tx.vendor_name}` : ""
     }`;
-    const { error: e } = await supabase.from("expenses").insert([
-      {
-        amount: tx.total_amount,
-        category: PURCHASE_EXPENSE_CATEGORY,
-        note,
-        ...(tx.created_at ? { created_at: tx.created_at } : {}),
-      },
-    ]);
+    const { data: exp, error: e } = await supabase
+      .from("expenses")
+      .insert([
+        {
+          amount: tx.total_amount,
+          category: PURCHASE_EXPENSE_CATEGORY,
+          note,
+          ...(tx.created_at ? { created_at: tx.created_at } : {}),
+        },
+      ])
+      .select("id")
+      .single();
     if (e) throw e;
+    // Link this stock row to its expense so a purchase delete removes both.
+    // Ignored if the expense_id column isn't there yet (migration not run).
+    if (exp?.id) {
+      await supabase
+        .from("stock_transactions")
+        .update({ expense_id: exp.id })
+        .eq("id", data.id);
+    }
   } else if (tx.type === STOCK_TYPES.SALE) {
     const note = incomeNote || `${label} — ${tx.quantity} sold`;
     const row = {
@@ -305,7 +317,9 @@ export async function addBulkPurchase({
   purchaseDate = "",
 }) {
   const createdAt = purchaseTimestamp(purchaseDate);
-  const rows = lines.map((l) => ({
+  const disc = Number(discount) || 0;
+  const trans = Number(transport) || 0;
+  const rows = lines.map((l, i) => ({
     product_id: l.product_id,
     type: STOCK_TYPES.PURCHASE,
     quantity: Number(l.quantity) || 0,
@@ -314,15 +328,30 @@ export async function addBulkPurchase({
     total_amount: (Number(l.quantity) || 0) * (Number(l.price_per_unit) || 0),
     vendor_id: vendorId || null,
     vendor_name: vendorName || null,
+    // Store the order's discount/transport on the FIRST row only, so summing
+    // across the batch yields the right totals.
+    discount: i === 0 ? disc : 0,
+    transport: i === 0 ? trans : 0,
     ...(createdAt ? { created_at: createdAt } : {}),
   }));
 
-  const { error } = await supabase.from("stock_transactions").insert(rows);
+  let { data: inserted, error } = await supabase
+    .from("stock_transactions")
+    .insert(rows)
+    .select("id");
+  // If discount/transport columns aren't there yet, insert without them.
+  if (error) {
+    /* eslint-disable no-unused-vars */
+    const stripped = rows.map(({ discount, transport, ...r }) => r);
+    /* eslint-enable no-unused-vars */
+    ({ data: inserted, error } = await supabase
+      .from("stock_transactions")
+      .insert(stripped)
+      .select("id"));
+  }
   if (error) throw error;
 
   const subtotal = rows.reduce((s, r) => s + r.total_amount, 0);
-  const disc = Number(discount) || 0;
-  const trans = Number(transport) || 0;
   const total = Math.max(0, subtotal - disc + trans);
   const extras = [
     disc ? `disc ₹${disc}` : null,
@@ -330,17 +359,33 @@ export async function addBulkPurchase({
   ]
     .filter(Boolean)
     .join(", ");
-  const { error: e2 } = await supabase.from("expenses").insert([
-    {
-      amount: total,
-      category: "Product purchase",
-      note: `Bulk purchase${vendorName ? ` from ${vendorName}` : ""}: ${
-        lines.length
-      } item(s)${extras ? ` (${extras})` : ""}`,
-      ...(createdAt ? { created_at: createdAt } : {}),
-    },
-  ]);
+  const { data: exp, error: e2 } = await supabase
+    .from("expenses")
+    .insert([
+      {
+        amount: total,
+        category: "Product purchase",
+        note: `Bulk purchase${vendorName ? ` from ${vendorName}` : ""}: ${
+          lines.length
+        } item(s)${extras ? ` (${extras})` : ""}`,
+        ...(createdAt ? { created_at: createdAt } : {}),
+      },
+    ])
+    .select("id")
+    .single();
   if (e2) throw e2;
+
+  // Link every stock row in this batch to the expense (for batch delete).
+  // Ignored if the expense_id column isn't there yet (migration not run).
+  if (exp?.id && inserted?.length) {
+    await supabase
+      .from("stock_transactions")
+      .update({ expense_id: exp.id })
+      .in(
+        "id",
+        inserted.map((r) => r.id)
+      );
+  }
 
   // Update each product's latest selling price.
   for (const l of lines) {
@@ -351,6 +396,123 @@ export async function addBulkPurchase({
         .eq("id", l.product_id);
     }
   }
+}
+
+// Delete a whole purchase batch: removes its stock movements AND the linked
+// expense together, so product stock, vendor history, and expenses all stay in
+// sync. `items` are the batch's stock_transactions rows (carry id + expense_id).
+export async function deletePurchaseBatch(items) {
+  const stockIds = items.map((i) => i.id).filter(Boolean);
+  const expenseIds = [
+    ...new Set(items.map((i) => i.expense_id).filter(Boolean)),
+  ];
+
+  if (stockIds.length) {
+    const { error } = await supabase
+      .from("stock_transactions")
+      .delete()
+      .in("id", stockIds);
+    if (error) throw error;
+  }
+  if (expenseIds.length) {
+    const { error } = await supabase
+      .from("expenses")
+      .delete()
+      .in("id", expenseIds);
+    if (error) throw error;
+  }
+}
+
+// "What to buy this month" analysis. For each product it computes recent
+// consumption, a usage-based reorder qty and a low-stock top-up, the larger of
+// which is the suggested qty, and an estimated cost (at last purchase price).
+// Also returns this-month spend, last-month spend, and the remaining budget.
+//   usageDays  - window used to measure how fast a product moves (default 60)
+//   bufferDays - how many days of stock to keep on hand (default 30)
+export async function getPurchasePlan({ usageDays = 60, bufferDays = 30 } = {}) {
+  const products = await getProducts();
+  const { data: txs, error } = await supabase
+    .from("stock_transactions")
+    .select("product_id, type, quantity, total_amount, price_per_unit, created_at");
+  if (error) throw error;
+
+  const byProduct = {};
+  for (const t of txs) (byProduct[t.product_id] ||= []).push(t);
+
+  const now = Date.now();
+  const usageCutoff = now - usageDays * 86400000;
+  const d = new Date();
+  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const lastMonthStart = new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime();
+
+  let suggestedTotal = 0;
+  let boughtThisMonth = 0;
+  let lastMonthSpend = 0;
+
+  const rows = products.map((p) => {
+    const list = byProduct[p.id] || [];
+    const s = calcStock(list);
+    let usageQty = 0;
+    let boughtQtyThisMonth = 0;
+    for (const t of list) {
+      const ts = new Date(t.created_at).getTime();
+      const q = Number(t.quantity) || 0;
+      const out =
+        t.type === STOCK_TYPES.SALE ||
+        t.type === STOCK_TYPES.USAGE ||
+        t.type === STOCK_TYPES.LOSS;
+      if (out && ts >= usageCutoff) usageQty += q;
+      if (t.type === STOCK_TYPES.PURCHASE) {
+        const amt = Number(t.total_amount) || 0;
+        if (ts >= monthStart) {
+          boughtQtyThisMonth += q;
+          boughtThisMonth += amt;
+        } else if (ts >= lastMonthStart) {
+          lastMonthSpend += amt;
+        }
+      }
+    }
+    const perDay = usageQty / usageDays;
+    const monthlyUse = Math.round(perDay * 30 * 10) / 10;
+    const usageSuggested = Math.max(0, Math.ceil(perDay * bufferDays - s.stock));
+    const min = Number(p.minimum_stock) || 0;
+    const low = min > 0 && s.stock <= min;
+    const lowTopUp = low ? Math.max(0, min * 2 - s.stock) : 0;
+    const suggestedQty = Math.max(usageSuggested, lowTopUp);
+    const unitCost = Number(s.lastPurchasePrice) || 0;
+    const estCost = suggestedQty * unitCost;
+    suggestedTotal += estCost;
+    return {
+      id: p.id,
+      name: p.name,
+      code: p.code || "",
+      unit: p.unit || "",
+      stock: s.stock,
+      min,
+      low,
+      monthlyUse,
+      usageSuggested,
+      lowTopUp,
+      suggestedQty,
+      unitCost,
+      estCost,
+      boughtQtyThisMonth,
+    };
+  });
+
+  rows.sort(
+    (a, b) => b.suggestedQty - a.suggestedQty || b.estCost - a.estCost
+  );
+
+  return {
+    rows,
+    totals: {
+      suggestedTotal,
+      boughtThisMonth,
+      lastMonthSpend,
+      remaining: Math.max(0, suggestedTotal - boughtThisMonth),
+    },
+  };
 }
 
 // Vendor names typed before, to suggest again on new purchases.

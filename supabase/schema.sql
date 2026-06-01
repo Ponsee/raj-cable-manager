@@ -53,6 +53,7 @@ create table if not exists worker_transactions (
   work_details jsonb,                   -- e.g. {"joints":8}, {"purpose":"Petrol"}, {"advance_reduced":500}
   calculated_amount numeric default 0,
   note text,
+  expense_id uuid references expenses (id) on delete set null, -- the auto-created expense (for delete sync)
   created_at timestamptz default now()
 );
 
@@ -92,8 +93,11 @@ create table if not exists stock_transactions (
   price_per_unit numeric default 0,    -- purchase cost (or sale price for sales)
   selling_price numeric,               -- planned selling price set with a purchase
   total_amount numeric default 0,
+  discount numeric default 0,           -- bulk-order discount (on the batch's first row)
+  transport numeric default 0,          -- bulk-order transport cost (on the batch's first row)
   vendor_name text,                     -- name snapshot for quick display
   vendor_id uuid references vendors (id),
+  expense_id uuid references expenses (id) on delete set null, -- the purchase's expense row (for batch delete)
   note text,
   created_at timestamptz default now()
 );

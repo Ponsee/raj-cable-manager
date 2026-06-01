@@ -20,8 +20,12 @@ import {
   getProducts,
   addBulkPurchase,
   createProduct,
+  deletePurchaseBatch,
 } from "../services/productsService";
 import { formatCurrency, formatDate } from "../utils/format";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
+import DeleteIcon from "@mui/icons-material/DeleteOutlined";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -34,12 +38,20 @@ function groupByBatch(rows) {
     if (!map.has(r.created_at)) map.set(r.created_at, []);
     map.get(r.created_at).push(r);
   }
-  return [...map.entries()].map(([key, items]) => ({
-    key,
-    date: key,
-    items,
-    total: items.reduce((s, t) => s + (Number(t.total_amount) || 0), 0),
-  }));
+  return [...map.entries()].map(([key, items]) => {
+    const subtotal = items.reduce((s, t) => s + (Number(t.total_amount) || 0), 0);
+    const discount = items.reduce((s, t) => s + (Number(t.discount) || 0), 0);
+    const transport = items.reduce((s, t) => s + (Number(t.transport) || 0), 0);
+    return {
+      key,
+      date: key,
+      items,
+      subtotal,
+      discount,
+      transport,
+      total: subtotal - discount + transport,
+    };
+  });
 }
 
 export default function VendorDetails() {
@@ -55,6 +67,19 @@ export default function VendorDetails() {
   const [deleteError, setDeleteError] = useState("");
   const [dateRange, setDateRange] = useState(currentMonthRange());
   const [viewMode, setViewMode] = useState("batch"); // "batch" | "list"
+  const [confirmBatch, setConfirmBatch] = useState(null); // purchase batch to delete
+  const [deletingBatch, setDeletingBatch] = useState(false);
+
+  const doDeleteBatch = async () => {
+    setDeletingBatch(true);
+    try {
+      await deletePurchaseBatch(confirmBatch.items);
+      setConfirmBatch(null);
+      await load();
+    } finally {
+      setDeletingBatch(false);
+    }
+  };
 
   const doDelete = async () => {
     setDeleteError("");
@@ -220,16 +245,36 @@ export default function VendorDetails() {
                     {formatDate(b.date)} · {b.items.length} item
                     {b.items.length > 1 ? "s" : ""}
                   </span>
-                  <span className="font-semibold text-gray-900">
-                    {formatCurrency(b.total)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-gray-900">
+                      {formatCurrency(b.total)}
+                    </span>
+                    <Tooltip title="Delete this purchase (also removes its stock & expense)">
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => setConfirmBatch(b)}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </div>
                 </div>
                 <table className="w-full text-left text-sm">
                   <tbody className="divide-y divide-gray-100">
                     {b.items.map((t) => (
                       <tr key={t.id}>
                         <td className="px-3 py-2 text-gray-800">
-                          {t.product?.name || "-"}
+                          {t.product_id ? (
+                            <Link
+                              to={`/products/${t.product_id}`}
+                              className="text-indigo-600 hover:underline"
+                            >
+                              {t.product?.name || "-"}
+                            </Link>
+                          ) : (
+                            t.product?.name || "-"
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right text-gray-600">
                           {t.quantity} {t.product?.unit || ""}
@@ -244,6 +289,30 @@ export default function VendorDetails() {
                     ))}
                   </tbody>
                 </table>
+                {(b.discount > 0 || b.transport > 0) && (
+                  <div className="space-y-0.5 border-t border-gray-100 bg-gray-50/50 px-3 py-2 text-sm">
+                    <div className="flex justify-between text-gray-500">
+                      <span>Subtotal</span>
+                      <span>{formatCurrency(b.subtotal)}</span>
+                    </div>
+                    {b.discount > 0 && (
+                      <div className="flex justify-between text-gray-500">
+                        <span>Discount</span>
+                        <span>− {formatCurrency(b.discount)}</span>
+                      </div>
+                    )}
+                    {b.transport > 0 && (
+                      <div className="flex justify-between text-gray-500">
+                        <span>Transport</span>
+                        <span>+ {formatCurrency(b.transport)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-t border-gray-200 pt-1 font-semibold text-gray-900">
+                      <span>Net</span>
+                      <span>{formatCurrency(b.total)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -266,7 +335,16 @@ export default function VendorDetails() {
                       {formatDate(t.created_at)}
                     </td>
                     <td className="px-4 py-3 text-gray-800">
-                      {t.product?.name || "-"}
+                      {t.product_id ? (
+                        <Link
+                          to={`/products/${t.product_id}`}
+                          className="text-indigo-600 hover:underline"
+                        >
+                          {t.product?.name || "-"}
+                        </Link>
+                      ) : (
+                        t.product?.name || "-"
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right text-gray-700">
                       {t.quantity} {t.product?.unit || ""}
@@ -313,6 +391,22 @@ export default function VendorDetails() {
         message="Delete this vendor? Past purchases are kept but will no longer be linked to this vendor."
         loading={deleting}
         error={deleteError}
+      />
+
+      <ConfirmDialog
+        open={!!confirmBatch}
+        onClose={() => setConfirmBatch(null)}
+        onConfirm={doDeleteBatch}
+        title={
+          confirmBatch
+            ? `Delete this purchase (${confirmBatch.items.length} item${
+                confirmBatch.items.length > 1 ? "s" : ""
+              })?`
+            : "Delete purchase?"
+        }
+        message="This removes the stock received in this purchase (product stock goes down accordingly) AND its expense entry. This cannot be undone."
+        confirmLabel="Delete purchase"
+        loading={deletingBatch}
       />
     </div>
   );
@@ -582,7 +676,7 @@ function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save Purchase"}
           </Button>
         </div>
@@ -652,7 +746,7 @@ function EditVendorModal({ open, onClose, vendor, onSaved }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>

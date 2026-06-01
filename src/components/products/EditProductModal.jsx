@@ -108,7 +108,7 @@ export default function EditProductModal({ open, onClose, product, onSaved }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>
