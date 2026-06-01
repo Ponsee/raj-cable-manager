@@ -4,6 +4,8 @@ import Button from "../ui/Button";
 import Modal from "../ui/Modal";
 import StatCard from "../ui/StatCard";
 import ConfirmDialog from "../ui/ConfirmDialog";
+import Autocomplete from "@mui/material/Autocomplete";
+import TextField from "@mui/material/TextField";
 import DateRangePicker, {
   inRange,
   currentMonthRange,
@@ -25,8 +27,17 @@ const dayKey = (ts) => new Date(ts).toISOString().split("T")[0];
 // One reusable money ledger, used by both Income and Expense.
 // config: { table, title, subtitle, addLabel, accent, categories, totalLabel }
 export default function LedgerPage({ config }) {
-  const { table, title, subtitle, addLabel, accent, categories, totalLabel } =
-    config;
+  const {
+    table,
+    title,
+    subtitle,
+    addLabel,
+    accent,
+    categories,
+    totalLabel,
+    lockedCategories = [],
+    lockedHint = "",
+  } = config;
 
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -93,7 +104,28 @@ export default function LedgerPage({ config }) {
     const c = e.category || "Uncategorised";
     catTotals[c] = (catTotals[c] || 0) + (Number(e.amount) || 0);
   }
-  const topCat = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0];
+  const catBreakdown = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+  const topCat = catBreakdown[0];
+
+  // This calendar month vs last calendar month (fixed — ignores the range).
+  const monthOf = (ts) => {
+    const d = new Date(ts);
+    return d.getFullYear() * 12 + d.getMonth();
+  };
+  const nowMonth = (() => {
+    const d = new Date();
+    return d.getFullYear() * 12 + d.getMonth();
+  })();
+  const sumForMonth = (m) =>
+    entries
+      .filter((e) => monthOf(e.created_at) === m)
+      .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const thisMonthTotal = sumForMonth(nowMonth);
+  const lastMonthTotal = sumForMonth(nowMonth - 1);
+  const momPct =
+    lastMonthTotal > 0
+      ? Math.round(((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100)
+      : null;
 
   const exportCsv = () => {
     const header = ["Date", "Category", "Note", "Amount"];
@@ -122,16 +154,45 @@ export default function LedgerPage({ config }) {
       <PageHeader
         title={title}
         subtitle={subtitle}
-        action={<Button onClick={() => setAddOpen(true)}>{addLabel}</Button>}
+        action={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <DateRangePicker
+              start={range.start}
+              end={range.end}
+              onChange={setRange}
+            />
+            <Button onClick={() => setAddOpen(true)}>{addLabel}</Button>
+          </div>
+        }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard
           label={totalLabel}
           value={formatCurrency(total)}
           icon={accent === "green" ? "💰" : "💸"}
           accent={accent}
         />
+        <StatCard
+          label="This vs last month"
+          value={formatCurrency(thisMonthTotal)}
+          icon="📆"
+          accent="orange"
+        >
+          <p className="mt-1 text-xs text-gray-500">
+            Last month {formatCurrency(lastMonthTotal)}
+            {momPct !== null && (
+              <span
+                className={`ml-1 font-medium ${
+                  momPct > 0 ? "text-red-600" : momPct < 0 ? "text-green-600" : "text-gray-400"
+                }`}
+              >
+                {momPct > 0 ? "▲" : momPct < 0 ? "▼" : ""}
+                {Math.abs(momPct)}%
+              </span>
+            )}
+          </p>
+        </StatCard>
         <StatCard
           label="Today"
           value={formatCurrency(todayTotal)}
@@ -162,44 +223,66 @@ export default function LedgerPage({ config }) {
         />
       </div>
 
+      {/* By-category breakdown (for the selected range) */}
+      {catBreakdown.length > 0 && (
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-sm font-semibold text-gray-700">
+            By category <span className="font-normal text-gray-400">(selected range)</span>
+          </h3>
+          <div className="space-y-2">
+            {catBreakdown.map(([cat, amt]) => {
+              const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+              return (
+                <div key={cat}>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-700">{cat}</span>
+                    <span className="font-medium text-gray-900">
+                      {formatCurrency(amt)}{" "}
+                      <span className="text-xs text-gray-400">({pct}%)</span>
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full rounded-full bg-gray-100">
+                    <div
+                      className="h-1.5 rounded-full bg-indigo-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         {/* Filters */}
-        <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-3">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search category or note..."
-              className={inputClass + " sm:max-w-xs"}
-            />
-            <select
-              value={catFilter}
-              onChange={(e) => setCatFilter(e.target.value)}
-              className={inputClass + " sm:w-48"}
-            >
-              <option value="all">All categories</option>
-              {usedCats.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <DateRangePicker
-              start={range.start}
-              end={range.end}
-              onChange={setRange}
-            />
-            <button
-              type="button"
-              onClick={exportCsv}
-              disabled={filtered.length === 0}
-              className="self-start rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 sm:self-auto"
-            >
-              ⬇️ Export CSV
-            </button>
-          </div>
+        <div className="flex flex-col gap-2 border-b border-gray-100 px-4 py-3 sm:flex-row sm:items-center">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search category or note..."
+            className={inputClass + " sm:max-w-xs"}
+          />
+          <select
+            value={catFilter}
+            onChange={(e) => setCatFilter(e.target.value)}
+            className={inputClass + " sm:w-48"}
+          >
+            <option value="all">All categories</option>
+            {usedCats.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={filtered.length === 0}
+            className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 sm:ml-auto"
+          >
+            ⬇️ Export CSV
+          </button>
         </div>
 
         {filtered.length === 0 ? (
@@ -219,28 +302,39 @@ export default function LedgerPage({ config }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filtered.map((e) => (
-                  <tr key={e.id}>
-                    <td className="px-4 py-3 text-gray-600">
-                      {formatDate(e.created_at)}
-                    </td>
-                    <td className="px-4 py-3 text-gray-800">
-                      {e.category || "—"}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{e.note || "—"}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                      {formatCurrency(e.amount)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => setConfirmId(e.id)}
-                        className="text-sm font-medium text-red-600 hover:underline"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((e) => {
+                  const locked = lockedCategories.includes(e.category);
+                  return (
+                    <tr key={e.id}>
+                      <td className="px-4 py-3 text-gray-600">
+                        {formatDate(e.created_at)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-800">
+                        {e.category || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{e.note || "—"}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-gray-900">
+                        {formatCurrency(e.amount)}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {locked && (
+                          <span
+                            title={lockedHint}
+                            className="mr-2 cursor-help text-xs text-gray-400"
+                          >
+                            🔒 auto
+                          </span>
+                        )}
+                        <button
+                          onClick={() => setConfirmId(e.id)}
+                          className="text-sm font-medium text-red-600 hover:underline"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -264,15 +358,19 @@ export default function LedgerPage({ config }) {
         onClose={() => setConfirmId(null)}
         onConfirm={doDelete}
         title={`Delete this ${title.toLowerCase()} entry?`}
-        message="This removes the money record. This cannot be undone."
+        message={
+          lockedCategories.includes(
+            entries.find((e) => e.id === confirmId)?.category
+          )
+            ? "⚠️ This was auto-created from a purchase or worker entry. Deleting here removes ONLY this money record — better to delete it from its source (purchase batch / worker entry) so everything stays in sync. Continue anyway?"
+            : "This removes the money record. This cannot be undone."
+        }
         confirmLabel="Delete"
         loading={deleting}
       />
     </div>
   );
 }
-
-const ADD_NEW = "__new__";
 
 function AddEntryModal({
   open,
@@ -284,7 +382,6 @@ function AddEntryModal({
 }) {
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState(defaultCategories[0] || "");
-  const [newCategory, setNewCategory] = useState("");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(todayStr());
   const [suggestions, setSuggestions] = useState([]);
@@ -295,7 +392,6 @@ function AddEntryModal({
     if (open) {
       setAmount("");
       setCategory(defaultCategories[0] || "");
-      setNewCategory("");
       setNote("");
       setDate(todayStr());
       setError("");
@@ -310,7 +406,7 @@ function AddEntryModal({
   const handleSave = async (e) => {
     e.preventDefault();
     setError("");
-    const finalCategory = category === ADD_NEW ? newCategory.trim() : category;
+    const finalCategory = category.trim();
     if (!(Number(amount) > 0)) return setError("Enter an amount greater than 0.");
     if (!finalCategory) return setError("Choose or enter a category.");
 
@@ -354,26 +450,16 @@ function AddEntryModal({
           <label className="mb-1 block text-sm font-medium text-gray-700">
             Category
           </label>
-          <select
+          <Autocomplete
+            freeSolo
+            options={catOptions}
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className={inputClass}
-          >
-            {catOptions.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-            <option value={ADD_NEW}>➕ Add new…</option>
-          </select>
-          {category === ADD_NEW && (
-            <input
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              className={inputClass + " mt-2"}
-              placeholder="New category name"
-            />
-          )}
+            inputValue={category}
+            onInputChange={(_e, val) => setCategory(val)}
+            renderInput={(params) => (
+              <TextField {...params} size="small" placeholder="Pick or type a category" />
+            )}
+          />
         </div>
 
         <div>
@@ -405,7 +491,7 @@ function AddEntryModal({
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>

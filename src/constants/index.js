@@ -102,14 +102,21 @@ export const PRODUCT_TYPE_LABELS = {
   [PRODUCT_TYPES.SERVICE]: "Service material",
 };
 
+// A product's "use" can be one or more types, stored comma-joined
+// (e.g. "shop,service"). This renders the friendly label(s).
+export function productTypeLabel(value) {
+  const parts = String(value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!parts.length) return "-";
+  return parts.map((p) => PRODUCT_TYPE_LABELS[p] || p).join(" + ");
+}
+
 // ---- Categories (used in dropdowns) ----
 export const PRODUCT_CATEGORIES = [
   "Cable",
-  "Connector",
-  "ONU",
   "Router",
-  "Fiber",
-  "Splitter",
   "Other",
 ];
 
@@ -142,7 +149,7 @@ export const INCOME_CATEGORIES = [
 // no sale income); `variants` adds a HD/SD style toggle; `charge` adds a
 // separate connection/install charge field.
 export const INCOME_SOURCES = [
-  { key: "daily_collection", label: "Daily Collection", icon: "🧾", mode: "simple" },
+  { key: "cable_collection", label: "Cable Collection", icon: "📺", mode: "simple" },
   {
     key: "shop_collection",
     label: "Shop Collection",
@@ -151,7 +158,7 @@ export const INCOME_SOURCES = [
     hint: "Pick the product sold (remote, splitter, etc.)",
     charge: false,
   },
-  { key: "cable_collection", label: "Cable Collection", icon: "📺", mode: "simple" },
+  { key: "daily_collection", label: "Daily Collection", icon: "🧾", mode: "simple" },
   {
     key: "new_cable",
     label: "New Cable",
@@ -187,6 +194,9 @@ export const EXPENSE_CATEGORIES = [
   "Product purchase",
   "Electricity",
   "Fuel",
+  "Water",
+  "Parcel",
+  "For Home",
   "Office expenses",
   "Other",
 ];
@@ -197,6 +207,7 @@ export const NAV_ITEMS = [
   { label: "Workers", path: "/workers", icon: "👷", adminOnly: true },
   { label: "Products", path: "/products", icon: "📦" },
   { label: "Vendors", path: "/vendors", icon: "🏪" },
+  { label: "Buy Plan", path: "/purchase-plan", icon: "🧮", adminOnly: true },
   { label: "Income", path: "/income", icon: "🟢" },
   { label: "Expense", path: "/expense", icon: "🔴" },
   { label: "Reports", path: "/reports", icon: "📑" },

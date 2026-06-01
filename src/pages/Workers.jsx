@@ -210,7 +210,7 @@ export default function Workers() {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" loading={saving}>
               {saving ? "Saving..." : "Save Worker"}
             </Button>
           </div>

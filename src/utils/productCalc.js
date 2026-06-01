@@ -69,12 +69,14 @@ export function pricesByVendor(transactions = []) {
     const price = Number(t.price_per_unit) || 0;
     const g = (map[vendor] ||= {
       vendor,
+      vendorId: t.vendor_id || null,
       minPrice: price,
       lastPrice: price,
       lastAt: t.created_at,
       totalQty: 0,
       orders: 0,
     });
+    if (!g.vendorId && t.vendor_id) g.vendorId = t.vendor_id;
     g.minPrice = Math.min(g.minPrice, price);
     g.orders += 1;
     g.totalQty += Number(t.quantity) || 0;
@@ -83,7 +85,8 @@ export function pricesByVendor(transactions = []) {
       g.lastPrice = price;
     }
   }
-  return Object.values(map).sort((a, b) => a.minPrice - b.minPrice);
+  // Cheapest first, judged by each vendor's LATEST purchase price.
+  return Object.values(map).sort((a, b) => a.lastPrice - b.lastPrice);
 }
 
 // Readable line for the history table, e.g. "12 × ₹40 · Ramesh Traders".

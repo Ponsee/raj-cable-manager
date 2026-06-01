@@ -115,18 +115,47 @@ export async function addWorkerTransaction(tx, { workerName } = {}) {
   const amount = workerExpenseAmount(tx);
   if (category && amount > 0) {
     const note = workerName ? `${category} — ${workerName}` : category;
-    const { error: e } = await supabase.from("expenses").insert([
-      {
-        amount,
-        category,
-        note,
-        ...(tx.created_at ? { created_at: tx.created_at } : {}),
-      },
-    ]);
+    const { data: exp, error: e } = await supabase
+      .from("expenses")
+      .insert([
+        {
+          amount,
+          category,
+          note,
+          ...(tx.created_at ? { created_at: tx.created_at } : {}),
+        },
+      ])
+      .select("id")
+      .single();
     if (e) throw e;
+    // Link the worker transaction to its expense so a delete removes both.
+    // Ignored if the expense_id column isn't there yet (migration not run).
+    if (exp?.id) {
+      await supabase
+        .from("worker_transactions")
+        .update({ expense_id: exp.id })
+        .eq("id", data.id);
+    }
   }
 
   return data;
+}
+
+// Delete a worker transaction AND its linked auto-expense (if any), so the
+// worker balance and the Expense ledger both stay correct.
+export async function deleteWorkerTransaction(tx) {
+  if (tx.expense_id) {
+    const { error } = await supabase
+      .from("expenses")
+      .delete()
+      .eq("id", tx.expense_id);
+    if (error) throw error;
+  }
+  const { error } = await supabase
+    .from("worker_transactions")
+    .delete()
+    .eq("id", tx.id);
+  if (error) throw error;
 }
 
 // Custom work types the user has typed before, so we can suggest them again.

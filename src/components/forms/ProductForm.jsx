@@ -1,4 +1,7 @@
-import { useState } from "react";
+import Autocomplete from "@mui/material/Autocomplete";
+import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import { PRODUCT_CATEGORIES, PRODUCT_TYPES } from "../../constants";
 import ProductImages from "../products/ProductImages";
 
@@ -34,7 +37,6 @@ export default function ProductForm({
   onImageFilesChange,
   codeHint,
 }) {
-  const [addingCat, setAddingCat] = useState(false);
   const allCategories = [
     ...new Set([...PRODUCT_CATEGORIES, ...categorySuggestions, form.category].filter(Boolean)),
   ];
@@ -74,19 +76,25 @@ export default function ProductForm({
 
       <div>
         <label className="mb-1 block text-sm font-medium text-gray-700">
-          Product use
+          Product use <span className="font-normal text-gray-400">(pick one or both)</span>
         </label>
-        <select
-          name="product_type"
-          value={form.product_type}
-          onChange={onChange}
-          className={inputClass}
+        <ToggleButtonGroup
+          size="small"
+          color="primary"
+          value={(form.product_type || "").split(",").filter(Boolean)}
+          onChange={(_e, vals) => {
+            // keep at least one selected
+            const next = vals.length ? vals : (form.product_type || "").split(",").filter(Boolean);
+            onChange({ target: { name: "product_type", value: next.join(",") } });
+          }}
         >
-          <option value={PRODUCT_TYPES.SHOP}>Shop product (for resale)</option>
-          <option value={PRODUCT_TYPES.SERVICE}>
-            Service material (used for cable work)
-          </option>
-        </select>
+          <ToggleButton value={PRODUCT_TYPES.SHOP} sx={{ textTransform: "none" }}>
+            Shop product (resale)
+          </ToggleButton>
+          <ToggleButton value={PRODUCT_TYPES.SERVICE} sx={{ textTransform: "none" }}>
+            Service material
+          </ToggleButton>
+        </ToggleButtonGroup>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -94,63 +102,39 @@ export default function ProductForm({
           <label className="mb-1 block text-sm font-medium text-gray-700">
             Category
           </label>
-          {addingCat ? (
-            <div className="flex gap-2">
-              <input
-                name="category"
-                value={form.category}
-                onChange={onChange}
-                className={inputClass}
-                placeholder="New category"
-                autoFocus
+          <Autocomplete
+            freeSolo
+            options={allCategories}
+            value={form.category || ""}
+            inputValue={form.category || ""}
+            onInputChange={(_e, val) =>
+              onChange({ target: { name: "category", value: val } })
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                size="small"
+                placeholder="Pick or type a category"
               />
-              <button
-                type="button"
-                onClick={() => setAddingCat(false)}
-                className="shrink-0 rounded-lg border border-gray-200 px-3 text-sm text-gray-600 hover:bg-gray-50"
-              >
-                List
-              </button>
-            </div>
-          ) : (
-            <select
-              value={form.category}
-              onChange={(e) => {
-                if (e.target.value === "__add__") {
-                  setAddingCat(true);
-                  onChange({ target: { name: "category", value: "" } });
-                } else {
-                  onChange(e);
-                }
-              }}
-              className={inputClass}
-            >
-              {allCategories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-              <option value="__add__">➕ Add new…</option>
-            </select>
-          )}
+            )}
+          />
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">
             Sub-category / brand
           </label>
-          <input
-            name="subcategory"
-            list="subcategoryList"
-            value={form.subcategory}
-            onChange={onChange}
-            className={inputClass}
-            placeholder="e.g. TCCL, Airtel"
+          <Autocomplete
+            freeSolo
+            options={subcategorySuggestions}
+            value={form.subcategory || ""}
+            inputValue={form.subcategory || ""}
+            onInputChange={(_e, val) =>
+              onChange({ target: { name: "subcategory", value: val } })
+            }
+            renderInput={(params) => (
+              <TextField {...params} size="small" placeholder="e.g. TCCL, Airtel" />
+            )}
           />
-          <datalist id="subcategoryList">
-            {subcategorySuggestions.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
         </div>
       </div>
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import CircularProgress from "@mui/material/CircularProgress";
 import { supabase } from "../services/supabase";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -251,8 +252,9 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-indigo-600 py-2.5 font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 py-2.5 font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
+              {loading && <CircularProgress size={16} color="inherit" />}
               {buttonLabel}
             </button>
           </form>

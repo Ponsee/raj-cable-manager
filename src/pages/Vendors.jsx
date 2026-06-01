@@ -140,7 +140,7 @@ export default function Vendors() {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" loading={saving}>
               {saving ? "Saving..." : "Save Vendor"}
             </Button>
           </div>

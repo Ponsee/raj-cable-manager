@@ -12,6 +12,7 @@ import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import TextField from "@mui/material/TextField";
 import MenuItem from "@mui/material/MenuItem";
+import Autocomplete from "@mui/material/Autocomplete";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import MuiButton from "@mui/material/Button";
@@ -161,6 +162,34 @@ export default function Income() {
   const dayCount = new Set(filtered.map((e) => dayKey(e.created_at))).size;
   const avgPerDay = dayCount ? total / dayCount : 0;
 
+  // This calendar month vs last (fixed — ignores the range filter).
+  const monthOf = (ts) => {
+    const d = new Date(ts);
+    return d.getFullYear() * 12 + d.getMonth();
+  };
+  const nowMonth = (() => {
+    const d = new Date();
+    return d.getFullYear() * 12 + d.getMonth();
+  })();
+  const sumForMonth = (m) =>
+    entries
+      .filter((e) => monthOf(e.created_at) === m)
+      .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const thisMonthTotal = sumForMonth(nowMonth);
+  const lastMonthTotal = sumForMonth(nowMonth - 1);
+  const momPct =
+    lastMonthTotal > 0
+      ? Math.round(((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100)
+      : null;
+
+  // By source (category) breakdown for the selected range.
+  const srcTotals = {};
+  for (const e of filtered) {
+    const c = e.category || "Other";
+    srcTotals[c] = (srcTotals[c] || 0) + (Number(e.amount) || 0);
+  }
+  const srcBreakdown = Object.entries(srcTotals).sort((a, b) => b[1] - a[1]);
+
   const days = groupByDay(filtered);
 
   const exportCsv = () => {
@@ -191,7 +220,12 @@ export default function Income() {
         title="Income"
         subtitle="Money coming in, by source"
         action={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <DateRangePicker
+              start={range.start}
+              end={range.end}
+              onChange={setRange}
+            />
             <Button variant="secondary" onClick={() => setLossOpen(true)}>
               ⚠️ Report Loss
             </Button>
@@ -213,6 +247,30 @@ export default function Income() {
           icon="💰"
           accent="indigo"
         />
+        <StatCard
+          label="This vs last month"
+          value={formatCurrency(thisMonthTotal)}
+          icon="📆"
+          accent="orange"
+        >
+          <p className="mt-1 text-xs text-gray-500">
+            Last month {formatCurrency(lastMonthTotal)}
+            {momPct !== null && (
+              <span
+                className={`ml-1 font-medium ${
+                  momPct > 0
+                    ? "text-green-600"
+                    : momPct < 0
+                      ? "text-red-600"
+                      : "text-gray-400"
+                }`}
+              >
+                {momPct > 0 ? "▲" : momPct < 0 ? "▼" : ""}
+                {Math.abs(momPct)}%
+              </span>
+            )}
+          </p>
+        </StatCard>
         <StatCard
           label="Cash"
           value={formatCurrency(cashTotal)}
@@ -239,20 +297,46 @@ export default function Income() {
         />
       </div>
 
+      {/* By-source breakdown (for the selected range) */}
+      {srcBreakdown.length > 0 && (
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-sm font-semibold text-gray-700">
+            By source <span className="font-normal text-gray-400">(selected range)</span>
+          </h3>
+          <div className="space-y-2">
+            {srcBreakdown.map(([src, amt]) => {
+              const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+              return (
+                <div key={src}>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-700">{src}</span>
+                    <span className="font-medium text-gray-900">
+                      {formatCurrency(amt)}{" "}
+                      <span className="text-xs text-gray-400">({pct}%)</span>
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full rounded-full bg-gray-100">
+                    <div
+                      className="h-1.5 rounded-full bg-green-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-3 lg:flex-row lg:items-start lg:justify-between">
-          {/* Left: search + date range together */}
+          {/* Left: search */}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search source or note..."
               className={inputClass + " sm:max-w-xs"}
-            />
-            <DateRangePicker
-              start={range.start}
-              end={range.end}
-              onChange={setRange}
             />
           </div>
 
@@ -799,7 +883,7 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save all"}
           </Button>
         </div>
@@ -891,21 +975,20 @@ function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
               key={i}
               className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 p-2"
             >
-              <TextField
-                select
-                label="Product"
+              <Autocomplete
+                options={products}
+                value={products.find((p) => p.id === it.productId) || null}
+                onChange={(_e, val) => pickProduct(i, val?.id || "")}
+                getOptionLabel={(p) =>
+                  p?.name ? `${p.name} (${p.stock} ${p.unit || "in stock"})` : ""
+                }
+                isOptionEqualToValue={(o, v) => o.id === v.id}
                 size="small"
-                value={it.productId}
-                onChange={(e) => pickProduct(i, e.target.value)}
-                sx={{ minWidth: 160, flex: 1 }}
-              >
-                <MenuItem value="">— Select —</MenuItem>
-                {products.map((p) => (
-                  <MenuItem key={p.id} value={p.id}>
-                    {p.name} ({p.stock} {p.unit || "in stock"})
-                  </MenuItem>
-                ))}
-              </TextField>
+                sx={{ minWidth: 180, flex: 1 }}
+                renderInput={(params) => (
+                  <TextField {...params} label="Product" placeholder="Search…" />
+                )}
+              />
               <TextField
                 label="Qty"
                 type="number"

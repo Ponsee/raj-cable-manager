@@ -328,7 +328,7 @@ function ApproveModal({ target, onClose, onApproved, approvedBy }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="button" disabled={saving} onClick={handleApprove}>
+          <Button type="button" loading={saving} onClick={handleApprove}>
             {saving ? "Approving..." : "Approve"}
           </Button>
         </div>

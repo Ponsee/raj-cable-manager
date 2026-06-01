@@ -5,6 +5,7 @@ import PageHeader from "../components/ui/PageHeader";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import StatCard from "../components/ui/StatCard";
+import { LineChart } from "@mui/x-charts/LineChart";
 import EditProductModal from "../components/products/EditProductModal";
 import StockLossModal from "../components/products/StockLossModal";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
@@ -21,7 +22,7 @@ import {
 } from "../services/productsService";
 import { getVendors, createVendor } from "../services/vendorsService";
 import { calcStock, isLowStock, pricesByVendor } from "../utils/productCalc";
-import { STOCK_TYPES, PRODUCT_TYPE_LABELS } from "../constants";
+import { STOCK_TYPES, productTypeLabel } from "../constants";
 import { formatCurrency, formatDate } from "../utils/format";
 
 const inputClass =
@@ -66,6 +67,7 @@ export default function ProductDetails() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [dateRange, setDateRange] = useState(currentMonthRange());
   const [historyKey, setHistoryKey] = useState(null);
+  const [vendorByName, setVendorByName] = useState({}); // name -> id, to link vendors
 
   const load = async () => {
     setLoading(true);
@@ -85,6 +87,18 @@ export default function ProductDetails() {
     load();
   }, [id]);
 
+  // Map vendor name -> id so the "Prices by vendor" rows can link even when an
+  // old purchase didn't store a vendor_id.
+  useEffect(() => {
+    getVendors()
+      .then((vs) => {
+        const m = {};
+        for (const v of vs) if (v.name) m[v.name.trim().toLowerCase()] = v.id;
+        setVendorByName(m);
+      })
+      .catch(() => {});
+  }, []);
+
   if (loading) return <p className="text-gray-400">Loading product...</p>;
   if (!product) {
     return (
@@ -98,6 +112,21 @@ export default function ProductDetails() {
   }
 
   const summary = calcStock(txs);
+
+  // Buy vs sell price over time (from purchase batches, oldest first).
+  // Sell falls back to the product's current selling price when a purchase
+  // didn't record one, so the sell line still shows.
+  const fallbackSell =
+    product.selling_price != null ? Number(product.selling_price) : null;
+  const priceHistory = txs
+    .filter((t) => t.type === STOCK_TYPES.PURCHASE)
+    .slice()
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .map((t) => ({
+      date: formatDate(t.created_at),
+      buy: Number(t.price_per_unit) || 0,
+      sell: t.selling_price != null ? Number(t.selling_price) : fallbackSell,
+    }));
   const low = isLowStock(summary.stock, product.minimum_stock);
   const vendorPrices = pricesByVendor(txs);
 
@@ -248,10 +277,8 @@ export default function ProductDetails() {
             );
           })()}
           <dl className="space-y-2 text-sm">
-            <Row
-              label="Use"
-              value={PRODUCT_TYPE_LABELS[product.product_type] || "-"}
-            />
+            {product.code && <Row label="Product ID" value={product.code} />}
+            <Row label="Use" value={productTypeLabel(product.product_type)} />
             <Row label="Category" value={product.category || "-"} />
             {product.subcategory && (
               <Row label="Brand / sub" value={product.subcategory} />
@@ -359,13 +386,50 @@ export default function ProductDetails() {
         </div>
       </div>
 
+      {/* Price history — buy vs sell over time */}
+      {priceHistory.length > 0 && (
+        <div className="mb-6 overflow-hidden rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-1 font-semibold text-gray-800">Price history</h3>
+          <p className="mb-2 text-xs text-gray-400">
+            Buy price (cost) vs intended selling price, per purchase.
+          </p>
+          <div className="overflow-x-auto">
+            <LineChart
+              height={260}
+              xAxis={[
+                {
+                  scaleType: "point",
+                  data: priceHistory.map((_, i) => i),
+                  valueFormatter: (i) => priceHistory[i]?.date ?? "",
+                },
+              ]}
+              series={[
+                {
+                  data: priceHistory.map((p) => p.buy),
+                  label: "Buy price",
+                  color: "#ef4444",
+                  showMark: true,
+                },
+                {
+                  data: priceHistory.map((p) => p.sell),
+                  label: "Sell price",
+                  color: "#16a34a",
+                  showMark: true,
+                  connectNulls: true,
+                },
+              ]}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Prices by vendor — cheapest first */}
       {vendorPrices.length > 0 && (
         <div className="mb-6 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-100 px-4 py-3">
             <h3 className="font-semibold text-gray-800">Prices by vendor</h3>
             <p className="text-xs text-gray-400">
-              Cheapest supplier first (based on lowest purchase price).
+              Cheapest supplier first (based on latest purchase price).
             </p>
           </div>
           <div className="max-h-72 overflow-auto">
@@ -382,7 +446,21 @@ export default function ProductDetails() {
                 {vendorPrices.map((v, i) => (
                   <tr key={v.vendor} className={i === 0 ? "bg-green-50" : ""}>
                     <td className="px-4 py-3 font-medium text-gray-900">
-                      {v.vendor}
+                      {(() => {
+                        const vid =
+                          v.vendorId ||
+                          vendorByName[(v.vendor || "").trim().toLowerCase()];
+                        return vid ? (
+                          <Link
+                            to={`/vendors/${vid}`}
+                            className="text-indigo-600 hover:underline"
+                          >
+                            {v.vendor}
+                          </Link>
+                        ) : (
+                          v.vendor
+                        );
+                      })()}
                       {i === 0 && (
                         <span className="ml-2 rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
                           cheapest
@@ -916,7 +994,7 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" loading={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>
