@@ -35,6 +35,16 @@ import DateRangePicker, {
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
 
+// Combine a chosen date ("YYYY-MM-DD") with the current time so same-day entries
+// keep their order. Empty → undefined (DB defaults created_at to now()).
+function txTimestamp(dateStr) {
+  if (!dateStr) return undefined;
+  const now = new Date();
+  const d = new Date(dateStr);
+  d.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+  return d.toISOString();
+}
+
 const typeBadge = {
   advance: "bg-amber-100 text-amber-700",
   work: "bg-green-100 text-green-700",
@@ -618,12 +628,25 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
     if (type === "salary") {
       if (monthYear) parts.push(monthYear);
       if (Number(leaveDays) > 0) parts.push(`${leaveDays} day leave`);
-      if (Number(amount) > 0)
+      if (Number(amount) > 0) {
         parts.push(`Advance reduced: ${formatCurrency(Number(amount))}`);
+        parts.push(
+          `Remaining advance: ${formatCurrency(
+            Math.max(0, totalAdvance - Number(amount))
+          )}`
+        );
+      }
+      if (salaryBase > 0) parts.push(`Net paid: ${formatCurrency(salaryNet)}`);
     } else if (type === TRANSACTION_TYPES.WORK) {
       if (Number(joints) > 0) parts.push(`${joints} joints`);
-      if (Number(amount) > 0)
+      if (Number(amount) > 0) {
         parts.push(`Advance reduced: ${formatCurrency(Number(amount))}`);
+        parts.push(
+          `Remaining advance: ${formatCurrency(
+            Math.max(0, outstandingAdvance - Number(amount))
+          )}`
+        );
+      }
       if (workGross > 0) parts.push(`Net paid: ${formatCurrency(workNet)}`);
     } else if (type === "bonus") {
       if (monthYear) parts.push(monthYear);
@@ -676,6 +699,8 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
       worker_id: worker.id,
       type,
       note: finalNote || null,
+      // Record on the chosen date (keep current time so same-day rows stay ordered).
+      ...(salaryDate ? { created_at: txTimestamp(salaryDate) } : {}),
     };
 
     if (type === "salary") {
@@ -759,8 +784,8 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Add Transaction" size="lg">
-      <form onSubmit={handleSave} className="space-y-4">
+    <Modal open={open} onClose={onClose} title="Add Transaction" size="md">
+      <form onSubmit={handleSave} className="space-y-3">
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
@@ -808,17 +833,20 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
           </p>
         </div>
 
+        {/* Date — applies to every transaction type (default: today) */}
+        <Field label="Date">
+          <input
+            type="date"
+            value={salaryDate}
+            max={new Date().toISOString().split("T")[0]}
+            onChange={(e) => setSalaryDate(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+
         {/* SALARY fields for employee */}
         {type === "salary" && isSalary && (
           <>
-            <Field label="Date">
-              <input
-                type="date"
-                value={salaryDate}
-                onChange={(e) => setSalaryDate(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
             <Field label="Advance to reduce (₹)">
               <input
                 type="number"
@@ -863,6 +891,14 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
                   <span>−{formatCurrency(Number(amount))}</span>
                 </div>
               )}
+              {totalAdvance > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Remaining advance</span>
+                  <span>
+                    {formatCurrency(Math.max(0, totalAdvance - (Number(amount) || 0)))}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between border-t border-green-200 pt-1 font-semibold">
                 <span>Net salary to pay</span>
                 <span>{formatCurrency(salaryNet)}</span>
@@ -874,14 +910,6 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
         {/* BONUS fields (employee + contractor) */}
         {type === "bonus" && (
           <>
-            <Field label="Date">
-              <input
-                type="date"
-                value={salaryDate}
-                onChange={(e) => setSalaryDate(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
             <Field label="Bonus amount (₹)">
               <input
                 type="number"
@@ -964,6 +992,14 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
                 <div className="flex justify-between text-red-600">
                   <span>Reduce from advance</span>
                   <span>−{formatCurrency(advanceReduced)}</span>
+                </div>
+              )}
+              {outstandingAdvance > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Remaining advance</span>
+                  <span>
+                    {formatCurrency(Math.max(0, outstandingAdvance - advanceReduced))}
+                  </span>
                 </div>
               )}
               <div className="flex justify-between border-t border-green-200 pt-1 font-semibold">

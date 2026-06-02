@@ -151,6 +151,17 @@ but then you still need upload policies — running the migration is easier.
 - The note is built by `buildNote()` and saved **at submit time** (not only via the
   live effect), so the auto-generated note always persists. History shows the note
   for every type (falls back to the computed description for Work only when blank).
+- The note captures the full picture: e.g. salary → "June 2026, Advance reduced: ₹X,
+  Remaining advance: ₹Y, Net paid: ₹Z"; contract work → "N joints, Advance reduced:
+  ₹X, Remaining advance: ₹Y, Net paid: ₹Z".
+
+### Add Transaction form
+- One **Date** field for **every** type (default today, `max` = today) lets you
+  backdate any entry; `txTimestamp()` keeps the current time so same-day rows stay
+  ordered, and the date flows to the auto-created expense too.
+- Salary and contract-work breakdowns show **Current advance → Reduce → Remaining
+  advance → Net to pay**, updating live as you type the reduction.
+- Modal is medium-sized (`size="md"`) and compact.
 
 ### UI
 - Add Transaction: type buttons on one responsive row; auto-filled note for every type.
