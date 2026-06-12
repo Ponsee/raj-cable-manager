@@ -8,7 +8,9 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 > (`Button`, `Modal`, `StatCard`, `PageHeader`, `DateRangePicker`) and the
 > finance/product forms are built on MUI, themed via `src/theme.js` (indigo
 > brand) and wrapped in `ThemeProvider` + `LocalizationProvider` in `main.jsx`.
-> Tailwind is still used for page layout.
+> Tailwind is still used for page layout. The **sidebar is grouped** into sections
+> (Main / Finance / Inventory / Team / System) via a `group` field on `NAV_ITEMS`.
+> The **Reports** page was merged into the **Dashboard** and removed.
 
 ---
 
@@ -39,7 +41,7 @@ but then you still need upload policies — running the migration is easier.
 
 **npm packages added:** `qrcode.react`, `html5-qrcode`, **`@mui/material`,
 `@mui/icons-material`, `@emotion/react`, `@emotion/styled`,
-`@mui/x-date-pickers`, `@mui/x-charts`, `dayjs`** (run `npm install` if pulling fresh).
+`@mui/x-date-pickers`, `@mui/x-charts`, `dayjs`, `xlsx`** (run `npm install` if pulling fresh).
 
 > The app degrades gracefully if a migration hasn't been run yet (e.g. income
 > still loads without `payment_method`/`stock_tx_id`; products save without
@@ -167,8 +169,10 @@ but then you still need upload policies — running the migration is easier.
 - Add Transaction: type buttons on one responsive row; auto-filled note for every type.
 - One reusable `HistoryModal` per stat card (Salary / Bonus / Increment / Advance /
   Balance reduction / Expense), each with its **own** date range (independent of the page).
-- Stat cards per type (incl. **Total Expense** ⛽). Transaction history has inner
-  scroll + sticky header. Workers list "Balance Due" matches the details page.
+- Stat cards per type (incl. **Total Expense** ⛽). The **Total Advance** card also
+  shows a sub-line with this **calendar month's** advance (e.g. "June: ₹500").
+  Transaction history rows have a 🗑️ delete; history has inner scroll + sticky
+  header. Workers list "Balance Due" matches the details page.
 
 ---
 
@@ -301,8 +305,10 @@ but then you still need upload policies — running the migration is easier.
 - Source order (most-used first): **Cable Collection · Shop Collection · Daily
   Collection** · New Cable · New Internet · Internet Recharge · Other (entry 1
   defaults to Cable Collection).
-- Device-line **product pickers are searchable MUI Autocomplete** (Add Income +
-  the Report Loss modal) — type to find a product.
+- Device-line **product pickers use the shared `ProductPicker`** — a searchable
+  MUI Autocomplete that **shows each product's image** in the options (used in Add
+  Income, Report Loss, and Bulk Purchase). The Bulk Purchase one is freeSolo with
+  an explicit **"➕ Add new product"** option.
 - Over-sell guard aggregates product quantities across the whole batch.
 
 ### Payment method (Cash / Online)
@@ -323,7 +329,8 @@ but then you still need upload policies — running the migration is easier.
 - Stat cards: Today's collection · Total (range) · **This vs last month** (▲/▼ %,
   up = green for income) · **Cash** · **Online** · Avg/day · **Days with income**.
 - **By-source breakdown** list (each source + total + % bar) for the range.
-- Filters: search, **payment** (All/Cash/Online), Export CSV. Per-row 🗑️ delete too.
+- Filters: search, **payment** (All/Cash/Online), **Export Excel** (month-wise
+  sheets via `utils/excel.js`). Per-row 🗑️ delete too.
 
 ### Product sale ↔ stock link & edit/delete
 - Each product-sale income row links to its stock movement via `income.stock_tx_id`
@@ -344,10 +351,21 @@ but then you still need upload policies — running the migration is easier.
 - **Cards:** Total Expense · **This vs last month** (▲/▼ %, up = red for expense) ·
   Today · Avg/day · **Top category** · Entries.
 - **By-category breakdown** list (each category + total + % bar) for the range.
-- Filter row = search + category filter + **Export CSV** (all on one line).
+- Filter row = search + category filter + **Export Excel** (month-wise sheets).
 - **Category** in Add Expense is a **MUI Autocomplete** combobox (pick or type new);
   defaults include Staff salary, Product purchase, Electricity, Fuel, **Water,
   Parcel, For Home**, Office expenses, Other.
+
+### Unified "Add Expense" (config `unifiedAdd: true`)
+- The **+ Add Expense** button opens a **chooser** (with breadcrumb + Back):
+  - **General expense** → batch form: one date, several category + amount + note lines.
+  - **Worker pay** *(admin only)* → pick a worker → the **real** Worker
+    `AddTransactionModal` (all types) → records the worker entry **and** its expense.
+  - **Product purchase** → pick a vendor → the **real** `BulkPurchaseModal` →
+    records the stock purchase **and** its expense.
+- These reuse the exported `AddTransactionModal` / `typeInfoFor` (WorkerDetails)
+  and `BulkPurchaseModal` (VendorDetails) — **no duplicated logic**; both source
+  and expense stay in sync.
 - **Auto-populated from:** product **purchases** (single + bulk) and **worker pay**
   (salary/advance/payment/bonus/petrol/contract-work — see Workers). Plus any
   manual entries (Electricity, Fuel, Office, etc.).
@@ -379,6 +397,30 @@ top-up, suggested, est. cost; Low items flagged). Nav: **🧮 Buy Plan** (adminO
 
 ---
 
+## 📊 Dashboard (`pages/Dashboard.jsx`) — analytics hub
+
+The old **Reports** page was merged here and removed. The Dashboard is now the
+single analytics page, driven by a header **DateRangePicker** + **Export Excel**:
+- Greeting uses the user's **profile name**.
+- **KPI cards** (clickable → relevant page): Today's income · Income/Expense
+  (range) · Net profit · Cash · Online · Low-stock · Stock value · **Worker balance
+  due** *(admin)* · **Pending approvals** *(admin, when >0)*.
+- **Charts:** Income vs Expense per day (shared `IncomeExpenseChart`), **Income by
+  source** pie, **Expense by category** pie, and a **Last 6 months** income/expense
+  bar (independent of the range). Pies group small slices into "Other".
+- **Recent activity** — latest 8 income/expense entries.
+- **Export Excel** — `xlsx` workbook: a **Summary** sheet + **one sheet per month**
+  of combined income/expense transactions. Worker queries only run for admins.
+
+## ⚙️ Settings (`pages/Settings.jsx`)
+
+- **My profile** — edit name + mobile (updates `profiles`); read-only email/role/status.
+- **Change password** — `supabase.auth.updateUser({ password })`.
+- **Account** — sign out; admins get a link to Users.
+- **About** — app name + version.
+
+---
+
 ## 🧩 Shared / UI components added
 
 | File | Purpose |
@@ -390,9 +432,12 @@ top-up, suggested, est. cost; Low items flagged). Nav: **🧮 Buy Plan** (adminO
 | `components/ui/PageHeader.jsx` | MUI Typography title row |
 | `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
 | `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / This year / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()` |
-| `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows |
+| `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals) |
+| `components/finance/IncomeExpenseChart.jsx` | Shared income-vs-expense bar chart (Dashboard) |
+| `components/products/ProductPicker.jsx` | Searchable product Autocomplete **with image** (+ `renderProductOption`) |
 | `components/products/StockLossModal.jsx` | Report loss/damage (Income + Product Details) |
 | `components/products/ProductImages.jsx` | Multi-image picker (upload + camera, max 5) |
+| `utils/excel.js` | `exportMonthlyExcel()` — `.xlsx` with a Summary sheet + one sheet per month |
 | `pages/PurchasePlan.jsx` | "What to buy this month" budget analyzer (`@mui/x-charts` not used here; uses `getPurchasePlan`) |
 | `components/forms/WorkerForm.jsx` | Shared worker add/edit fields + pricing helpers |
 | `components/forms/ProductForm.jsx` | Shared product add/edit fields (code + images) |

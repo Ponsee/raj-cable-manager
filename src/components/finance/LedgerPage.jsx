@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PageHeader from "../ui/PageHeader";
 import Button from "../ui/Button";
 import Modal from "../ui/Modal";
@@ -16,7 +16,17 @@ import {
   deleteEntry,
   getCategorySuggestions,
 } from "../../services/financeService";
+import { getWorkers } from "../../services/workersService";
+import { getVendors } from "../../services/vendorsService";
+import { useAuth } from "../../context/AuthContext";
+import { ROLES } from "../../constants";
+import {
+  AddTransactionModal,
+  typeInfoFor,
+} from "../../pages/WorkerDetails";
+import { BulkPurchaseModal } from "../../pages/VendorDetails";
 import { formatCurrency, formatDate } from "../../utils/format";
+import { exportMonthlyExcel } from "../../utils/excel";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -37,7 +47,11 @@ export default function LedgerPage({ config }) {
     totalLabel,
     lockedCategories = [],
     lockedHint = "",
+    unifiedAdd = false, // expense: also add worker pay / product purchase
   } = config;
+
+  const { role } = useAuth();
+  const isAdmin = role === ROLES.ADMIN;
 
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,6 +61,10 @@ export default function LedgerPage({ config }) {
   const [addOpen, setAddOpen] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [kindOpen, setKindOpen] = useState(false); // "what to add" chooser
+  const [chooserStart, setChooserStart] = useState(null); // reopen at a step on Back
+  const [pickedWorker, setPickedWorker] = useState(null);
+  const [pickedVendor, setPickedVendor] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -127,25 +145,17 @@ export default function LedgerPage({ config }) {
       ? Math.round(((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100)
       : null;
 
-  const exportCsv = () => {
-    const header = ["Date", "Category", "Note", "Amount"];
-    const rows = filtered.map((e) => [
-      formatDate(e.created_at),
-      e.category || "",
-      (e.note || "").replace(/"/g, '""'),
-      Number(e.amount) || 0,
-    ]);
-    const csv = [header, ...rows]
-      .map((r) => r.map((c) => `"${c}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${table}-${todayStr()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const exportExcel = () =>
+    exportMonthlyExcel({
+      filename: `${table}-${todayStr()}.xlsx`,
+      entries: filtered,
+      shape: (e) => ({
+        Date: formatDate(e.created_at),
+        Category: e.category || "",
+        Note: e.note || "",
+        Amount: Number(e.amount) || 0,
+      }),
+    });
 
   if (loading) return <p className="text-gray-400">Loading {title}...</p>;
 
@@ -161,7 +171,18 @@ export default function LedgerPage({ config }) {
               end={range.end}
               onChange={setRange}
             />
-            <Button onClick={() => setAddOpen(true)}>{addLabel}</Button>
+            <Button
+              onClick={() => {
+                if (unifiedAdd) {
+                  setChooserStart(null);
+                  setKindOpen(true);
+                } else {
+                  setAddOpen(true);
+                }
+              }}
+            >
+              {addLabel}
+            </Button>
           </div>
         }
       />
@@ -277,11 +298,11 @@ export default function LedgerPage({ config }) {
           </select>
           <button
             type="button"
-            onClick={exportCsv}
+            onClick={exportExcel}
             disabled={filtered.length === 0}
             className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 sm:ml-auto"
           >
-            ⬇️ Export CSV
+            ⬇️ Export Excel
           </button>
         </div>
 
@@ -353,6 +374,66 @@ export default function LedgerPage({ config }) {
         }}
       />
 
+      {unifiedAdd && (
+        <>
+          <AddKindChooser
+            open={kindOpen}
+            startKind={chooserStart}
+            showWorker={isAdmin}
+            onClose={() => setKindOpen(false)}
+            onGeneral={() => {
+              setKindOpen(false);
+              setAddOpen(true);
+            }}
+            onWorker={(w) => {
+              setKindOpen(false);
+              setPickedWorker(w);
+            }}
+            onVendor={(v) => {
+              setKindOpen(false);
+              setPickedVendor(v);
+            }}
+          />
+
+          {pickedWorker && (
+            <AddTransactionModal
+              open={!!pickedWorker}
+              worker={pickedWorker}
+              info={typeInfoFor(pickedWorker.type)}
+              title={`Add Expense › Worker pay › ${pickedWorker.name}`}
+              onBack={() => {
+                setPickedWorker(null);
+                setChooserStart("worker");
+                setKindOpen(true);
+              }}
+              onClose={() => setPickedWorker(null)}
+              onSaved={async () => {
+                setPickedWorker(null);
+                await load();
+              }}
+            />
+          )}
+
+          {pickedVendor && (
+            <BulkPurchaseModal
+              open={!!pickedVendor}
+              vendor={pickedVendor}
+              title={`Add Expense › Product purchase › ${pickedVendor.name}`}
+              onBack={() => {
+                setPickedVendor(null);
+                setChooserStart("vendor");
+                setKindOpen(true);
+              }}
+              onClose={() => setPickedVendor(null)}
+              onSaved={async () => {
+                setPickedVendor(null);
+                await load();
+              }}
+            />
+          )}
+        </>
+      )}
+
       <ConfirmDialog
         open={!!confirmId}
         onClose={() => setConfirmId(null)}
@@ -372,6 +453,117 @@ export default function LedgerPage({ config }) {
   );
 }
 
+// "What do you want to add?" — general expense, worker pay, or product purchase.
+function AddKindChooser({
+  open,
+  startKind,
+  showWorker = false,
+  onClose,
+  onGeneral,
+  onWorker,
+  onVendor,
+}) {
+  const [kind, setKind] = useState(null); // null | "worker" | "vendor"
+  const [workers, setWorkers] = useState([]);
+  const [vendors, setVendors] = useState([]);
+
+  useEffect(() => {
+    if (open) {
+      setKind(startKind || null);
+      getWorkers().then(setWorkers).catch(() => {});
+      getVendors().then(setVendors).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const crumb =
+    kind === "worker"
+      ? "Add Expense › Worker pay"
+      : kind === "vendor"
+        ? "Add Expense › Product purchase"
+        : "Add Expense";
+
+  const bigBtn =
+    "flex flex-col items-center gap-1 rounded-lg border border-gray-200 px-3 py-4 text-sm font-medium text-gray-700 transition hover:border-indigo-400 hover:bg-indigo-50";
+
+  return (
+    <Modal open={open} onClose={onClose} title={crumb}>
+      <div className="space-y-3">
+        {!kind && (
+          <>
+            <p className="text-sm text-gray-500">What do you want to add?</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <button type="button" onClick={onGeneral} className={bigBtn}>
+                <span className="text-2xl">🧾</span>
+                General expense
+              </button>
+              {showWorker && (
+                <button type="button" onClick={() => setKind("worker")} className={bigBtn}>
+                  <span className="text-2xl">👷</span>
+                  Worker pay
+                </button>
+              )}
+              <button type="button" onClick={() => setKind("vendor")} className={bigBtn}>
+                <span className="text-2xl">📦</span>
+                Product purchase
+              </button>
+            </div>
+          </>
+        )}
+
+        {kind === "worker" && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Select worker — then record advance / salary / payment / bonus / expense
+            </label>
+            <Autocomplete
+              options={workers}
+              getOptionLabel={(w) => w?.name || ""}
+              isOptionEqualToValue={(o, v) => o.id === v.id}
+              onChange={(_e, val) => val && onWorker(val)}
+              renderInput={(params) => (
+                <TextField {...params} size="small" placeholder="Search worker…" autoFocus />
+              )}
+            />
+            <button
+              type="button"
+              onClick={() => setKind(null)}
+              className="mt-3 text-sm text-indigo-600 hover:underline"
+            >
+              ← Back
+            </button>
+          </div>
+        )}
+
+        {kind === "vendor" && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Select vendor — then add the products bought (records purchase + expense)
+            </label>
+            <Autocomplete
+              options={vendors}
+              getOptionLabel={(v) => v?.name || ""}
+              isOptionEqualToValue={(o, v) => o.id === v.id}
+              onChange={(_e, val) => val && onVendor(val)}
+              renderInput={(params) => (
+                <TextField {...params} size="small" placeholder="Search vendor…" autoFocus />
+              )}
+            />
+            <button
+              type="button"
+              onClick={() => setKind(null)}
+              className="mt-3 text-sm text-indigo-600 hover:underline"
+            >
+              ← Back
+            </button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// Batch add: one date, many expense lines (each its own category + amount + note).
 function AddEntryModal({
   open,
   onClose,
@@ -380,20 +572,24 @@ function AddEntryModal({
   defaultCategories,
   onSaved,
 }) {
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState(defaultCategories[0] || "");
-  const [note, setNote] = useState("");
+  const idRef = useRef(0);
+  const makeLine = () => ({
+    _id: ++idRef.current,
+    category: defaultCategories[0] || "",
+    amount: "",
+    note: "",
+  });
+
   const [date, setDate] = useState(todayStr());
+  const [lines, setLines] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
-      setAmount("");
-      setCategory(defaultCategories[0] || "");
-      setNote("");
       setDate(todayStr());
+      setLines([makeLine()]);
       setError("");
       getCategorySuggestions(table).then(setSuggestions).catch(() => {});
     }
@@ -403,16 +599,34 @@ function AddEntryModal({
   // Defaults + any previously-used categories, de-duplicated.
   const catOptions = [...new Set([...defaultCategories, ...suggestions])];
 
+  const updateLine = (id, patch) =>
+    setLines((ls) => ls.map((l) => (l._id === id ? { ...l, ...patch } : l)));
+  const addLine = () => setLines((ls) => [...ls, makeLine()]);
+  const removeLine = (id) =>
+    setLines((ls) => (ls.length > 1 ? ls.filter((l) => l._id !== id) : ls));
+
+  const total = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+
   const handleSave = async (e) => {
     e.preventDefault();
     setError("");
-    const finalCategory = category.trim();
-    if (!(Number(amount) > 0)) return setError("Enter an amount greater than 0.");
-    if (!finalCategory) return setError("Choose or enter a category.");
-
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!(Number(l.amount) > 0))
+        return setError(`Entry ${i + 1}: enter an amount greater than 0.`);
+      if (!l.category.trim())
+        return setError(`Entry ${i + 1}: choose or enter a category.`);
+    }
     setSaving(true);
     try {
-      await addEntry(table, { amount, category: finalCategory, note, date });
+      for (const l of lines) {
+        await addEntry(table, {
+          amount: l.amount,
+          category: l.category.trim(),
+          note: l.note,
+          date,
+        });
+      }
       await onSaved();
     } catch (err) {
       setError(err.message);
@@ -422,8 +636,8 @@ function AddEntryModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={title}>
-      <form onSubmit={handleSave} className="space-y-4">
+    <Modal open={open} onClose={onClose} title={title} size="md">
+      <form onSubmit={handleSave} className="space-y-3">
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
@@ -432,67 +646,87 @@ function AddEntryModal({
 
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">
-            Amount (₹)
-          </label>
-          <input
-            type="number"
-            min="0"
-            step="any"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className={inputClass}
-            placeholder="0"
-            autoFocus
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            Category
-          </label>
-          <Autocomplete
-            freeSolo
-            options={catOptions}
-            value={category}
-            inputValue={category}
-            onInputChange={(_e, val) => setCategory(val)}
-            renderInput={(params) => (
-              <TextField {...params} size="small" placeholder="Pick or type a category" />
-            )}
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            Date
+            Date (applies to all)
           </label>
           <input
             type="date"
             value={date}
             max={todayStr()}
             onChange={(e) => setDate(e.target.value)}
-            className={inputClass}
+            className={inputClass + " sm:max-w-xs"}
           />
         </div>
 
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            Note (optional)
-          </label>
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className={inputClass}
-            placeholder="Optional"
-          />
+        <div className="max-h-[24rem] space-y-2 overflow-auto pr-1">
+          {lines.map((line, i) => (
+            <div
+              key={line._id}
+              className="space-y-2 rounded-lg border border-gray-200 p-3"
+            >
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <Autocomplete
+                    freeSolo
+                    options={catOptions}
+                    value={line.category}
+                    inputValue={line.category}
+                    onInputChange={(_e, val) => updateLine(line._id, { category: val })}
+                    size="small"
+                    renderInput={(params) => (
+                      <TextField {...params} label={`Entry ${i + 1} — category`} />
+                    )}
+                  />
+                </div>
+                <TextField
+                  label="Amount (₹)"
+                  type="number"
+                  size="small"
+                  value={line.amount}
+                  onChange={(e) => updateLine(line._id, { amount: e.target.value })}
+                  sx={{ width: 120 }}
+                  inputProps={{ min: 0, step: "any" }}
+                />
+                {lines.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeLine(line._id)}
+                    className="mt-1.5 shrink-0 px-1 text-lg text-gray-400 hover:text-red-600"
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              <TextField
+                label="Note (optional)"
+                size="small"
+                value={line.note}
+                onChange={(e) => updateLine(line._id, { note: e.target.value })}
+                fullWidth
+              />
+            </div>
+          ))}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
+        <button
+          type="button"
+          onClick={addLine}
+          className="text-sm font-medium text-indigo-600 hover:underline"
+        >
+          + Add another expense
+        </button>
+
+        <div className="flex justify-between rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">
+          <span>{lines.length} expense{lines.length === 1 ? "" : "s"}</span>
+          <span>{formatCurrency(total)}</span>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" loading={saving}>
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving..." : "Save all"}
           </Button>
         </div>
       </form>

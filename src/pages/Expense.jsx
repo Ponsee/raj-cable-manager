@@ -12,6 +12,7 @@ export default function Expense() {
         accent: "red",
         totalLabel: "Total Expense",
         categories: EXPENSE_CATEGORIES,
+        unifiedAdd: true, // also add worker pay / product purchase from here
         // Auto-created rows — delete them from their source (purchase / worker),
         // not here, so stock & worker records stay in sync.
         lockedCategories: [

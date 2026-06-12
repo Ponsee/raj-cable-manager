@@ -1,59 +1,321 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import * as XLSX from "xlsx";
+import { PieChart } from "@mui/x-charts/PieChart";
+import { BarChart } from "@mui/x-charts/BarChart";
+import IncomeExpenseChart from "../components/finance/IncomeExpenseChart";
 import PageHeader from "../components/ui/PageHeader";
+import Button from "../components/ui/Button";
 import StatCard from "../components/ui/StatCard";
-import { formatCurrency } from "../utils/format";
+import DateRangePicker, {
+  inRange,
+  currentMonthRange,
+} from "../components/ui/DateRangePicker";
+import { getEntries } from "../services/financeService";
+import { getProductsWithStock } from "../services/productsService";
+import { getWorkersWithBalance } from "../services/workersService";
+import { getPendingCount } from "../services/usersService";
+import { isLowStock } from "../utils/productCalc";
+import { formatCurrency, formatDate } from "../utils/format";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../constants";
 
-// Placeholder values for now. Real numbers get wired in once Workers /
-// Products / Income / Expense modules exist (Module 5 in the plan).
-export default function Dashboard() {
-  const { user, role } = useAuth();
-  const name = user?.email?.split("@")[0] || "there";
-  const isAdmin = role === ROLES.ADMIN;
+const dayKey = (ts) => new Date(ts).toISOString().split("T")[0];
+const sum = (arr) => arr.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+const payOf = (e) => ((e.payment_method || "Cash") === "Cash" ? "Cash" : "Online");
 
-  const tiles = [
-    { label: "Total Income", value: 0, icon: "💰", accent: "green" },
-    { label: "Total Expense", value: 0, icon: "💸", accent: "red" },
-    { label: "Profit", value: 0, icon: "📈", accent: "blue" },
-    // Worker pay is admin-only.
-    { label: "Pending Salary", value: 0, icon: "👷", accent: "amber", adminOnly: true },
-  ].filter((tile) => !tile.adminOnly || isAdmin);
+// Group rows by a key field → [{ key, amount }] sorted desc.
+function breakdown(rows, keyName) {
+  const map = {};
+  for (const r of rows) {
+    const k = r[keyName] || "Other";
+    map[k] = (map[k] || 0) + (Number(r.amount) || 0);
+  }
+  return Object.entries(map)
+    .map(([key, amount]) => ({ key, amount }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
+export default function Dashboard() {
+  const { user, profile, role } = useAuth();
+  const navigate = useNavigate();
+  const isAdmin = role === ROLES.ADMIN;
+  const name = profile?.name || user?.email?.split("@")[0] || "there";
+
+  const [income, setIncome] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [pending, setPending] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState(currentMonthRange());
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [inc, exp, prods] = await Promise.all([
+          getEntries("income"),
+          getEntries("expenses"),
+          getProductsWithStock(),
+        ]);
+        setIncome(inc);
+        setExpenses(exp);
+        setProducts(prods);
+        if (isAdmin) {
+          getWorkersWithBalance().then(setWorkers).catch(() => {});
+          getPendingCount().then(setPending).catch(() => {});
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [isAdmin]);
+
+  if (loading) return <p className="text-gray-400">Loading dashboard…</p>;
+
+  const today = dayKey(new Date().toISOString());
+  const inInc = income.filter((e) => inRange(e.created_at, range.start, range.end));
+  const inExp = expenses.filter((e) => inRange(e.created_at, range.start, range.end));
+
+  const todayIncome = sum(income.filter((e) => dayKey(e.created_at) === today));
+  const totalIncome = sum(inInc);
+  const totalExpense = sum(inExp);
+  const net = totalIncome - totalExpense;
+  const cash = sum(inInc.filter((e) => payOf(e) === "Cash"));
+  const online = totalIncome - cash;
+
+  const incomeBySource = breakdown(inInc, "category");
+  const expenseByCategory = breakdown(inExp, "category");
+
+  const lowStock = products.filter((p) => isLowStock(p.stock, p.minimum_stock));
+  const stockValue = products.reduce((s, p) => s + (Number(p.stockValue) || 0), 0);
+  const balanceDue = workers.reduce((s, w) => s + (Number(w.balance) || 0), 0);
+
+  const recent = [
+    ...income.map((e) => ({ ...e, kind: "income" })),
+    ...expenses.map((e) => ({ ...e, kind: "expense" })),
+  ]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 8);
+
+  // Last 6 months income vs expense (ignores the range — a longer-term view).
+  const ym = (ts) => {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  };
+  const now = new Date();
+  const monthCols = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    monthCols.push({
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+      label: d.toLocaleString("en-IN", { month: "short" }),
+    });
+  }
+  const mAgg = {};
+  monthCols.forEach((m) => (mAgg[m.key] = { income: 0, expense: 0 }));
+  for (const e of income)
+    if (mAgg[ym(e.created_at)]) mAgg[ym(e.created_at)].income += Number(e.amount) || 0;
+  for (const e of expenses)
+    if (mAgg[ym(e.created_at)]) mAgg[ym(e.created_at)].expense += Number(e.amount) || 0;
+
+  // Pie data: top categories + an "Other" slice for the rest.
+  const pieData = (rows, max = 6) => {
+    const data = rows.slice(0, max).map((r, i) => ({ id: i, value: r.amount, label: r.key }));
+    const rest = rows.slice(max).reduce((s, r) => s + r.amount, 0);
+    if (rest > 0) data.push({ id: max, value: rest, label: "Other" });
+    return data;
+  };
+
+  // Excel export — one sheet per month, plus a Summary sheet.
+  const monthLabel = (key) =>
+    new Date(`${key}-01`).toLocaleString("en-IN", { month: "short", year: "numeric" });
+
+  const exportExcel = () => {
+    // All income + expense in the selected range, tagged by type.
+    const all = [
+      ...inInc.map((e) => ({ ...e, _type: "Income" })),
+      ...inExp.map((e) => ({ ...e, _type: "Expense" })),
+    ];
+    const byMonth = {};
+    for (const e of all) (byMonth[ym(e.created_at)] ||= []).push(e);
+    const monthKeys = Object.keys(byMonth).sort();
+
+    const wb = XLSX.utils.book_new();
+
+    // Summary sheet: per-month income / expense / net.
+    const summary = monthKeys.map((k) => {
+      const rows = byMonth[k];
+      const inc = rows.filter((r) => r._type === "Income").reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const exp = rows.filter((r) => r._type === "Expense").reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      return { Month: monthLabel(k), Income: inc, Expense: exp, "Net profit": inc - exp };
+    });
+    summary.push({
+      Month: "TOTAL",
+      Income: totalIncome,
+      Expense: totalExpense,
+      "Net profit": net,
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), "Summary");
+
+    // One sheet per month with every transaction.
+    for (const k of monthKeys) {
+      const rows = byMonth[k]
+        .slice()
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+        .map((e) => ({
+          Date: formatDate(e.created_at),
+          Type: e._type,
+          "Category / Source": e.category || "",
+          Payment: e._type === "Income" ? e.payment_method || "Cash" : "",
+          Note: e.note || "",
+          Amount: Number(e.amount) || 0,
+        }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, monthLabel(k)); // e.g. "Jun 2026"
+    }
+
+    if (monthKeys.length === 0) {
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet([{ Note: "No data in the selected range" }]),
+        "Empty"
+      );
+    }
+
+    XLSX.writeFile(wb, `report-${today}.xlsx`);
+  };
 
   return (
     <div>
       <PageHeader
         title={`Welcome back, ${name} 👋`}
-        subtitle="Here's your business summary for this month"
+        subtitle="Business summary & reports"
+        action={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <DateRangePicker start={range.start} end={range.end} onChange={setRange} />
+            <Button variant="secondary" onClick={exportExcel}>
+              ⬇️ Export Excel
+            </Button>
+          </div>
+        }
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {tiles.map((tile) => (
-          <StatCard
-            key={tile.label}
-            label={tile.label}
-            value={formatCurrency(tile.value)}
-            icon={tile.icon}
-            accent={tile.accent}
-          />
-        ))}
+      {/* KPIs */}
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+        <StatCard label="Today's income" value={formatCurrency(todayIncome)} icon="📅" accent="green"
+          onClick={() => navigate("/income")} />
+        <StatCard label="Income (range)" value={formatCurrency(totalIncome)} icon="💰" accent="indigo"
+          onClick={() => navigate("/income")} />
+        <StatCard label="Expense (range)" value={formatCurrency(totalExpense)} icon="💸" accent="red"
+          onClick={() => navigate("/expense")} />
+        <StatCard label="Net profit" value={formatCurrency(net)} icon={net >= 0 ? "📈" : "📉"}
+          accent={net >= 0 ? "blue" : "red"} />
+        <StatCard label="Cash" value={formatCurrency(cash)} icon="💵" accent="amber" />
+        <StatCard label="Online" value={formatCurrency(online)} icon="📱" accent="purple" />
+        <StatCard label="Low-stock items" value={lowStock.length} icon="⚠️"
+          accent={lowStock.length > 0 ? "red" : "green"} onClick={() => navigate("/products")} />
+        <StatCard label="Stock value" value={formatCurrency(stockValue)} icon="🏷️" accent="blue" />
+        {isAdmin && (
+          <StatCard label="Worker balance due" value={formatCurrency(balanceDue)} icon="👷"
+            accent="orange" onClick={() => navigate("/workers")} />
+        )}
+        {isAdmin && pending > 0 && (
+          <StatCard label="Pending approvals" value={pending} icon="🔔" accent="amber"
+            onClick={() => navigate("/users")} />
+        )}
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h3 className="mb-4 font-semibold text-gray-800">
-            Income vs Expense
-          </h3>
-          <div className="flex h-48 items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-400">
-            Chart appears once you add income &amp; expenses
-          </div>
-        </div>
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h3 className="mb-4 font-semibold text-gray-800">Recent Activity</h3>
-          <div className="flex h-48 items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-400">
-            Latest payments &amp; entries will show here
-          </div>
-        </div>
+      {/* Daily trend */}
+      <div className="mb-6">
+        <ChartCard title="Income vs Expense" subtitle="Per day, selected range">
+          <IncomeExpenseChart income={income} expenses={expenses} start={range.start} end={range.end} />
+        </ChartCard>
       </div>
+
+      {/* Row 2: income source + expense category pies */}
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ChartCard title="Income by source" subtitle="Share of income (range)">
+          {incomeBySource.length === 0 ? (
+            <Empty />
+          ) : (
+            <PieChart height={260} series={[{ data: pieData(incomeBySource), innerRadius: 45, paddingAngle: 1 }]} />
+          )}
+        </ChartCard>
+        <ChartCard title="Expense by category" subtitle="Where money goes (range)">
+          {expenseByCategory.length === 0 ? (
+            <Empty />
+          ) : (
+            <PieChart height={260} series={[{ data: pieData(expenseByCategory), innerRadius: 45, paddingAngle: 1 }]} />
+          )}
+        </ChartCard>
+      </div>
+
+      {/* Monthly trend */}
+      <div className="mb-6">
+        <ChartCard title="Last 6 months" subtitle="Income vs expense by month">
+          <div className="overflow-x-auto">
+            <BarChart
+              height={280}
+              xAxis={[{ scaleType: "band", data: monthCols.map((m) => m.label) }]}
+              series={[
+                { data: monthCols.map((m) => mAgg[m.key].income), label: "Income", color: "#16a34a" },
+                { data: monthCols.map((m) => mAgg[m.key].expense), label: "Expense", color: "#ef4444" },
+              ]}
+            />
+          </div>
+        </ChartCard>
+      </div>
+
+      {/* Recent activity */}
+      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 font-semibold text-gray-800">Recent activity</h3>
+        {recent.length === 0 ? (
+          <div className="flex h-24 items-center justify-center text-sm text-gray-400">
+            No activity yet.
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {recent.map((e) => (
+              <div key={`${e.kind}-${e.id}`} className="flex items-center justify-between py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-gray-800">
+                    {e.category || (e.kind === "income" ? "Income" : "Expense")}
+                  </p>
+                  <p className="text-xs text-gray-400">{formatDate(e.created_at)}</p>
+                </div>
+                <span
+                  className={`shrink-0 text-sm font-semibold ${
+                    e.kind === "income" ? "text-green-600" : "text-red-600"
+                  }`}
+                >
+                  {e.kind === "income" ? "+" : "−"}
+                  {formatCurrency(e.amount)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <h3 className="font-semibold text-gray-800">{title}</h3>
+      {subtitle && <p className="mb-2 text-xs text-gray-400">{subtitle}</p>}
+      {children}
+    </div>
+  );
+}
+
+function Empty() {
+  return (
+    <div className="flex h-48 items-center justify-center text-sm text-gray-400">
+      No data in this range.
     </div>
   );
 }

@@ -15,7 +15,6 @@ import VendorDetails from "./pages/VendorDetails";
 import PurchasePlan from "./pages/PurchasePlan";
 import Income from "./pages/Income";
 import Expense from "./pages/Expense";
-import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 
 function App() {
@@ -65,7 +64,6 @@ function App() {
           />
           <Route path="/income" element={<Income />} />
           <Route path="/expense" element={<Expense />} />
-          <Route path="/reports" element={<Reports />} />
           <Route
             path="/users"
             element={
