@@ -12,7 +12,7 @@ import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import TextField from "@mui/material/TextField";
 import MenuItem from "@mui/material/MenuItem";
-import Autocomplete from "@mui/material/Autocomplete";
+import ProductPicker from "../components/products/ProductPicker";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import MuiButton from "@mui/material/Button";
@@ -39,6 +39,7 @@ import {
   PAYMENT_METHODS,
 } from "../constants";
 import { formatCurrency, formatDate } from "../utils/format";
+import { exportMonthlyExcel } from "../utils/excel";
 
 // Income rows created for the over/short adjustment aren't a real payment.
 const ADJUSTMENT_CATEGORY = "Adjustment";
@@ -192,25 +193,18 @@ export default function Income() {
 
   const days = groupByDay(filtered);
 
-  const exportCsv = () => {
-    const rows = filtered.map((e) => [
-      formatDate(e.created_at),
-      e.category || "",
-      e.payment_method || "Cash",
-      (e.note || "").replace(/"/g, '""'),
-      Number(e.amount) || 0,
-    ]);
-    const csv = [["Date", "Source", "Payment", "Note", "Amount"], ...rows]
-      .map((r) => r.map((c) => `"${c}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `income-${today}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const exportExcel = () =>
+    exportMonthlyExcel({
+      filename: `income-${today}.xlsx`,
+      entries: filtered,
+      shape: (e) => ({
+        Date: formatDate(e.created_at),
+        Source: e.category || "",
+        Payment: e.payment_method || "Cash",
+        Note: e.note || "",
+        Amount: Number(e.amount) || 0,
+      }),
+    });
 
   if (loading) return <p className="text-gray-400">Loading income...</p>;
 
@@ -380,11 +374,11 @@ export default function Income() {
             </div>
             <button
               type="button"
-              onClick={exportCsv}
+              onClick={exportExcel}
               disabled={filtered.length === 0}
               className="self-start rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 sm:self-auto"
             >
-              ⬇️ Export CSV
+              ⬇️ Export Excel
             </button>
           </div>
         </div>
@@ -975,19 +969,11 @@ function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
               key={i}
               className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 p-2"
             >
-              <Autocomplete
-                options={products}
-                value={products.find((p) => p.id === it.productId) || null}
-                onChange={(_e, val) => pickProduct(i, val?.id || "")}
-                getOptionLabel={(p) =>
-                  p?.name ? `${p.name} (${p.stock} ${p.unit || "in stock"})` : ""
-                }
-                isOptionEqualToValue={(o, v) => o.id === v.id}
-                size="small"
+              <ProductPicker
+                products={products}
+                value={it.productId}
+                onChange={(id) => pickProduct(i, id)}
                 sx={{ minWidth: 180, flex: 1 }}
-                renderInput={(params) => (
-                  <TextField {...params} label="Product" placeholder="Search…" />
-                )}
               />
               <TextField
                 label="Qty"

@@ -10,7 +10,6 @@ const LABELS = {
   "purchase-plan": "Buy Plan",
   income: "Income",
   expense: "Expense",
-  reports: "Reports",
   users: "Users",
   settings: "Settings",
 };

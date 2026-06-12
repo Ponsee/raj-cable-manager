@@ -66,7 +66,7 @@ const EXPENSE_TYPE_INFO = {
 };
 
 // For salary workers, 3 options: Advance, Salary, Bonus
-function typeInfoFor(workerType) {
+export function typeInfoFor(workerType) {
   if (workerType === WORKER_TYPES.SALARY) {
     return {
       advance: {
@@ -189,6 +189,23 @@ export default function WorkerDetails() {
   const info = typeInfoFor(worker.type);
   const isSalary = worker.type === WORKER_TYPES.SALARY;
 
+  // Advance given in the current calendar month (shown alongside total advance).
+  const nowMonth = (() => {
+    const d = new Date();
+    return d.getFullYear() * 12 + d.getMonth();
+  })();
+  const monthName = new Date().toLocaleString("en-IN", { month: "long" });
+  const thisMonthAdvance = txs
+    .filter(
+      (t) =>
+        t.type === TRANSACTION_TYPES.ADVANCE &&
+        (() => {
+          const d = new Date(t.created_at);
+          return d.getFullYear() * 12 + d.getMonth() === nowMonth;
+        })()
+    )
+    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
   // Find latest increment transaction for salary workers
   const incrementTxs = txs.filter((t) => t.type === "increment");
   const lastIncrement = incrementTxs[0];
@@ -294,7 +311,11 @@ export default function WorkerDetails() {
                 icon="💵"
                 accent="amber"
                 onClick={() => setAdvanceModalOpen(true)}
-              />
+              >
+                <p className="mt-1 text-xs text-gray-500">
+                  {monthName}: {formatCurrency(thisMonthAdvance)}
+                </p>
+              </StatCard>
               <StatCard
                 label="Balance Due"
                 value={formatCurrency(summary.balance)}
@@ -331,7 +352,11 @@ export default function WorkerDetails() {
                 icon="💵"
                 accent="amber"
                 onClick={() => setAdvanceModalOpen(true)}
-              />
+              >
+                <p className="mt-1 text-xs text-gray-500">
+                  {monthName}: {formatCurrency(thisMonthAdvance)}
+                </p>
+              </StatCard>
               <StatCard
                 label="Balance Due"
                 value={formatCurrency(summary.balance)}
@@ -560,7 +585,15 @@ function Row({ label, value }) {
 }
 
 // ---- Add Transaction form (employee: 2 options) ----
-function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
+export function AddTransactionModal({
+  open,
+  onClose,
+  worker,
+  info,
+  onSaved,
+  title = "Add Transaction",
+  onBack,
+}) {
   const isSalary = worker.type === WORKER_TYPES.SALARY;
 
   // Type options per worker kind (Expense applies to both).
@@ -784,8 +817,17 @@ function AddTransactionModal({ open, onClose, worker, info, onSaved }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Add Transaction" size="md">
+    <Modal open={open} onClose={onClose} title={title} size="md">
       <form onSubmit={handleSave} className="space-y-3">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-sm font-medium text-indigo-600 hover:underline"
+          >
+            ← Back
+          </button>
+        )}
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}

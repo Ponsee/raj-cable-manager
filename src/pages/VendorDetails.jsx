@@ -25,7 +25,12 @@ import {
 import { formatCurrency, formatDate } from "../utils/format";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
+import Autocomplete, { createFilterOptions } from "@mui/material/Autocomplete";
+import MuiTextField from "@mui/material/TextField";
 import DeleteIcon from "@mui/icons-material/DeleteOutlined";
+import { renderProductOption } from "../components/products/ProductPicker";
+
+const productFilter = createFilterOptions();
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -423,7 +428,7 @@ const emptyLine = {
 
 const todayStr = () => new Date().toISOString().split("T")[0];
 
-function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
+export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBack }) {
   const [products, setProducts] = useState([]);
   const [lines, setLines] = useState([{ ...emptyLine }]);
   const [purchaseDate, setPurchaseDate] = useState(todayStr());
@@ -510,8 +515,22 @@ function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={`Bulk Purchase — ${vendor.name}`} size="lg">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title || `Bulk Purchase — ${vendor.name}`}
+      size="lg"
+    >
       <form onSubmit={handleSave} className="space-y-4">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-sm font-medium text-indigo-600 hover:underline"
+          >
+            ← Back
+          </button>
+        )}
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
@@ -539,35 +558,90 @@ function BulkPurchaseModal({ open, onClose, vendor, onSaved }) {
             >
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <label className="mb-1 block text-xs text-gray-500">
-                    Product
-                  </label>
-                  <select
-                    value={l.product_id}
-                    onChange={(e) => setLine(i, "product_id", e.target.value)}
-                    className={inputClass}
-                  >
-                    <option value="">— Select —</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                    <option value="__new__">➕ Add new product…</option>
-                  </select>
-                  {l.product_id === "__new__" && (
-                    <input
-                      value={l.new_name}
-                      onChange={(e) => setLine(i, "new_name", e.target.value)}
-                      className={inputClass + " mt-1"}
-                      placeholder="New product name"
-                    />
+                  <Autocomplete
+                    freeSolo
+                    selectOnFocus
+                    handleHomeEndKeys
+                    options={products}
+                    value={
+                      l.product_id && l.product_id !== "__new__"
+                        ? products.find((p) => p.id === l.product_id) || null
+                        : l.product_id === "__new__"
+                          ? { __new: true, inputValue: l.new_name, name: l.new_name }
+                          : null
+                    }
+                    onChange={(_e, val) => {
+                      if (val && typeof val === "object" && val.__new) {
+                        setLine(i, "product_id", "__new__");
+                        setLine(i, "new_name", val.inputValue);
+                      } else if (val && typeof val === "object") {
+                        setLine(i, "product_id", val.id);
+                        setLine(i, "new_name", "");
+                      } else if (typeof val === "string" && val.trim()) {
+                        setLine(i, "product_id", "__new__");
+                        setLine(i, "new_name", val.trim());
+                      } else {
+                        setLine(i, "product_id", "");
+                        setLine(i, "new_name", "");
+                      }
+                    }}
+                    filterOptions={(options, params) => {
+                      const filtered = productFilter(options, params);
+                      const input = params.inputValue.trim();
+                      const exists = options.some(
+                        (o) => o.name?.toLowerCase() === input.toLowerCase()
+                      );
+                      if (input && !exists) {
+                        filtered.push({
+                          __new: true,
+                          inputValue: input,
+                          name: `➕ Add new product "${input}"`,
+                        });
+                      }
+                      return filtered;
+                    }}
+                    getOptionLabel={(p) =>
+                      typeof p === "string"
+                        ? p
+                        : p.__new
+                          ? p.inputValue
+                          : p.name || ""
+                    }
+                    isOptionEqualToValue={(o, v) => o.id === v?.id}
+                    renderOption={(props, p) => {
+                      if (p.__new) {
+                        const { key, ...rest } = props;
+                        return (
+                          <li
+                            key={key}
+                            {...rest}
+                            className="font-medium text-indigo-600"
+                          >
+                            {p.name}
+                          </li>
+                        );
+                      }
+                      return renderProductOption(props, p);
+                    }}
+                    size="small"
+                    renderInput={(params) => (
+                      <MuiTextField
+                        {...params}
+                        label="Product"
+                        placeholder="Search or add new…"
+                      />
+                    )}
+                  />
+                  {l.product_id === "__new__" && l.new_name.trim() && (
+                    <p className="mt-1 text-xs text-indigo-600">
+                      ➕ New product “{l.new_name}” will be created.
+                    </p>
                   )}
                 </div>
                 <button
                   type="button"
                   onClick={() => removeLine(i)}
-                  className="mt-6 shrink-0 px-1 text-lg text-gray-400 hover:text-red-600"
+                  className="mt-1.5 shrink-0 px-1 text-lg text-gray-400 hover:text-red-600"
                   title="Remove"
                 >
                   ×

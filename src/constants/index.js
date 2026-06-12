@@ -201,16 +201,19 @@ export const EXPENSE_CATEGORIES = [
   "Other",
 ];
 
-// ---- Sidebar navigation ----
+// ---- Sidebar navigation (grouped by section) ----
 export const NAV_ITEMS = [
-  { label: "Dashboard", path: "/dashboard", icon: "📊" },
-  { label: "Workers", path: "/workers", icon: "👷", adminOnly: true },
-  { label: "Products", path: "/products", icon: "📦" },
-  { label: "Vendors", path: "/vendors", icon: "🏪" },
-  { label: "Buy Plan", path: "/purchase-plan", icon: "🧮", adminOnly: true },
-  { label: "Income", path: "/income", icon: "🟢" },
-  { label: "Expense", path: "/expense", icon: "🔴" },
-  { label: "Reports", path: "/reports", icon: "📑" },
-  { label: "Users", path: "/users", icon: "👥", adminOnly: true },
-  { label: "Settings", path: "/settings", icon: "⚙️" },
+  { label: "Dashboard", path: "/dashboard", icon: "📊", group: "Main" },
+
+  { label: "Income", path: "/income", icon: "🟢", group: "Finance" },
+  { label: "Expense", path: "/expense", icon: "🔴", group: "Finance" },
+
+  { label: "Products", path: "/products", icon: "📦", group: "Inventory" },
+  { label: "Vendors", path: "/vendors", icon: "🏪", group: "Inventory" },
+  { label: "Buy Plan", path: "/purchase-plan", icon: "🧮", adminOnly: true, group: "Inventory" },
+
+  { label: "Workers", path: "/workers", icon: "👷", adminOnly: true, group: "Team" },
+  { label: "Users", path: "/users", icon: "👥", adminOnly: true, group: "Team" },
+
+  { label: "Settings", path: "/settings", icon: "⚙️", group: "System" },
 ];
