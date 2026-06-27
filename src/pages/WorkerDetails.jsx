@@ -25,6 +25,8 @@ import {
   TRANSACTION_TYPES,
   WORKER_TYPES,
   WORK_TYPES,
+  PAYMENT_METHODS_SPLIT,
+  PAYMENT_SPLIT,
 } from "../constants";
 import { formatCurrency, formatDate, ordinal } from "../utils/format";
 import DateRangePicker, {
@@ -611,6 +613,9 @@ export function AddTransactionModal({
   const [leaveDays, setLeaveDays] = useState("");
   const [newSalary, setNewSalary] = useState(""); // for increment
   const [purpose, setPurpose] = useState(EXPENSE_PURPOSES[0]); // for expense
+  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS_SPLIT[0]); // Cash by default
+  const [cashAmount, setCashAmount] = useState(""); // for Split
+  const [onlineAmount, setOnlineAmount] = useState(""); // for Split
   const [note, setNote] = useState("");
 
   // Advance figures loaded when the modal opens.
@@ -627,6 +632,16 @@ export function AddTransactionModal({
   // Contractor work payout: gross (per joint) − advance reduced = net to pay.
   const workGross = calcSplicing(joints, worker.pricing);
   const workNet = Math.max(0, workGross - advanceReduced);
+
+  // Actual cash leaving the business for this entry (what a Split must add up to).
+  const payAmount =
+    type === "salary"
+      ? salaryNet
+      : type === TRANSACTION_TYPES.WORK
+      ? workNet
+      : type === "increment"
+      ? 0
+      : Number(amount) || 0;
 
   // Load advance figures when the modal opens.
   useEffect(() => {
@@ -717,6 +732,9 @@ export function AddTransactionModal({
     setLeaveDays("");
     setNewSalary("");
     setPurpose(EXPENSE_PURPOSES[0]);
+    setPaymentMethod(PAYMENT_METHODS_SPLIT[0]);
+    setCashAmount("");
+    setOnlineAmount("");
     setNote("");
     setError("");
   };
@@ -732,6 +750,8 @@ export function AddTransactionModal({
       worker_id: worker.id,
       type,
       note: finalNote || null,
+      // How the pay went out (Cash/Online) — flows to the auto-created expense too.
+      payment_method: paymentMethod,
       // Record on the chosen date (keep current time so same-day rows stay ordered).
       ...(salaryDate ? { created_at: txTimestamp(salaryDate) } : {}),
     };
@@ -800,9 +820,29 @@ export function AddTransactionModal({
       payload.calculated_amount = 0;
     }
 
+    // Split payment: Cash + Online must add up to the cash actually paid out.
+    let cashAmt = 0;
+    let onlineAmt = 0;
+    if (paymentMethod === PAYMENT_SPLIT) {
+      cashAmt = Number(cashAmount) || 0;
+      onlineAmt = Number(onlineAmount) || 0;
+      if (Math.round(cashAmt + onlineAmt) !== Math.round(payAmount))
+        return setError(
+          `Cash + Online must add up to ${formatCurrency(payAmount)}.`
+        );
+      const breakdown = `Cash ${formatCurrency(cashAmt)} + Online ${formatCurrency(
+        onlineAmt
+      )}`;
+      payload.note = payload.note ? `${payload.note}, ${breakdown}` : breakdown;
+    }
+
     setSaving(true);
     try {
-      await addWorkerTransaction(payload, { workerName: worker.name });
+      await addWorkerTransaction(payload, {
+        workerName: worker.name,
+        cashAmount: cashAmt,
+        onlineAmount: onlineAmt,
+      });
       // Increment also bumps the worker's stored monthly salary going forward.
       if (type === "increment") {
         await updateWorker(worker.id, { monthly_salary: payload.calculated_amount });
@@ -885,6 +925,83 @@ export function AddTransactionModal({
             className={inputClass}
           />
         </Field>
+
+        {/* Paid via — Cash / Online / Split (skip increment: a raise, no cash out) */}
+        {type !== "increment" && (
+          <Field label="Paid via">
+            <div className="grid grid-cols-3 gap-2">
+              {PAYMENT_METHODS_SPLIT.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setPaymentMethod(m)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    paymentMethod === m
+                      ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            {paymentMethod === PAYMENT_SPLIT && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">
+                    Cash (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={payAmount}
+                    step="any"
+                    value={cashAmount}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCashAmount(v);
+                      // Auto-fill the Online part as whatever's left of the pay.
+                      setOnlineAmount(
+                        String(Math.max(0, payAmount - (Number(v) || 0)))
+                      );
+                    }}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">
+                    Online (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={payAmount}
+                    step="any"
+                    value={onlineAmount}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setOnlineAmount(v);
+                      // Auto-fill the Cash part as whatever's left of the pay.
+                      setCashAmount(
+                        String(Math.max(0, payAmount - (Number(v) || 0)))
+                      );
+                    }}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </div>
+                <p className="col-span-2 text-xs text-gray-500">
+                  Should add up to {formatCurrency(payAmount)} — entered{" "}
+                  {formatCurrency(
+                    (Number(cashAmount) || 0) + (Number(onlineAmount) || 0)
+                  )}
+                  .
+                </p>
+              </div>
+            )}
+          </Field>
+        )}
 
         {/* SALARY fields for employee */}
         {type === "salary" && isSalary && (

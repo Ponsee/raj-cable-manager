@@ -53,6 +53,7 @@ create table if not exists worker_transactions (
   work_details jsonb,                   -- e.g. {"joints":8}, {"purpose":"Petrol"}, {"advance_reduced":500}
   calculated_amount numeric default 0,
   note text,
+  payment_method text default 'Cash',   -- Cash | Online (how the pay went out)
   expense_id uuid references expenses (id) on delete set null, -- the auto-created expense (for delete sync)
   created_at timestamptz default now()
 );
@@ -119,6 +120,9 @@ create table if not exists expenses (
   amount numeric default 0,
   category text,
   note text,
+  payment_method text default 'Cash',   -- Cash | Online | Split
+  cash_amount numeric,                   -- when Split: the cash part
+  online_amount numeric,                 -- when Split: the online part
   created_at timestamptz default now()
 );
 
@@ -305,6 +309,35 @@ create policy "expenses admin all" on expenses for all
 create policy "expenses read" on expenses for select
   using (get_user_role() in ('admin','staff','viewer'));
 create policy "expenses staff insert" on expenses for insert
+  with check (get_user_role() in ('admin','staff'));
+
+-- PENDING PAYMENTS (customer credit)
+create table if not exists pending_payments (
+  id uuid primary key default gen_random_uuid(),
+  customer_name text,
+  product_id uuid references products (id) on delete set null,
+  description text,
+  category text,                       -- income category the paid amount books under
+  total_amount numeric default 0,
+  paid_amount numeric default 0,
+  status text default 'open',          -- open | closed
+  payment_method text default 'Cash',
+  created_at timestamptz default now(),
+  settled_at timestamptz
+);
+alter table pending_payments enable row level security;
+drop policy if exists "pending admin all"    on pending_payments;
+drop policy if exists "pending read"          on pending_payments;
+drop policy if exists "pending staff insert"  on pending_payments;
+drop policy if exists "pending staff update"  on pending_payments;
+create policy "pending admin all" on pending_payments for all
+  using (get_user_role() = 'admin') with check (get_user_role() = 'admin');
+create policy "pending read" on pending_payments for select
+  using (get_user_role() in ('admin','staff','viewer'));
+create policy "pending staff insert" on pending_payments for insert
+  with check (get_user_role() in ('admin','staff'));
+create policy "pending staff update" on pending_payments for update
+  using (get_user_role() in ('admin','staff'))
   with check (get_user_role() in ('admin','staff'));
 
 -- =====================================================================

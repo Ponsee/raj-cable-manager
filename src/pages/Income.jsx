@@ -32,6 +32,9 @@ import {
   addStockTransaction,
 } from "../services/productsService";
 import StockLossModal from "../components/products/StockLossModal";
+import ReturnModal from "../components/products/ReturnModal";
+import AddPendingModal from "../components/finance/AddPendingModal";
+import { addPending } from "../services/pendingService";
 import {
   INCOME_SOURCES,
   INTERNET_PROVIDERS,
@@ -51,8 +54,14 @@ const ADD_NEW = "__new__";
 const todayStr = () => new Date().toISOString().split("T")[0];
 const dayKey = (ts) => new Date(ts).toISOString().split("T")[0];
 const srcOf = (key) => INCOME_SOURCES.find((s) => s.key === key);
+// Sources where the customer may pay part now and owe the rest (credit sale).
+const PENDING_SOURCES = ["internet_recharge", "new_cable", "new_internet"];
+const allowsPending = (src) => !!src && PENDING_SOURCES.includes(src.key);
 // Normalise a row's payment to "Cash" or "Online" (old GPay/Other → Online).
 const payOf = (e) => ((e.payment_method || "Cash") === "Cash" ? "Cash" : "Online");
+// Income rows that came from a credit sale carry these note markers.
+const isPendingIncome = (e) =>
+  /\(paid .* of .*\)|\(balance collected\)/.test(e.note || "");
 
 // Combine a date input with the current time so same-day rows keep their order.
 function tsFromDate(date) {
@@ -92,6 +101,8 @@ export default function Income() {
   const [view, setView] = useState("daily"); // "daily" | "all"
   const [addOpen, setAddOpen] = useState(false);
   const [lossOpen, setLossOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [pendingOpen, setPendingOpen] = useState(false);
   const [confirmEntry, setConfirmEntry] = useState(null); // single entry to delete
   const [confirmBatch, setConfirmBatch] = useState(null); // whole day to delete
   const [deleting, setDeleting] = useState(false);
@@ -220,6 +231,12 @@ export default function Income() {
               end={range.end}
               onChange={setRange}
             />
+            <Button variant="secondary" onClick={() => setPendingOpen(true)}>
+              ⏳ Pending
+            </Button>
+            <Button variant="secondary" onClick={() => setReturnOpen(true)}>
+              ↩️ Return
+            </Button>
             <Button variant="secondary" onClick={() => setLossOpen(true)}>
               ⚠️ Report Loss
             </Button>
@@ -481,6 +498,26 @@ export default function Income() {
         }}
       />
 
+      <ReturnModal
+        open={returnOpen}
+        products={products}
+        onClose={() => setReturnOpen(false)}
+        onSaved={async () => {
+          setReturnOpen(false);
+          await load();
+        }}
+      />
+
+      <AddPendingModal
+        open={pendingOpen}
+        products={products}
+        onClose={() => setPendingOpen(false)}
+        onSaved={async () => {
+          setPendingOpen(false);
+          await load();
+        }}
+      />
+
       <ConfirmDialog
         open={!!confirmEntry}
         onClose={() => setConfirmEntry(null)}
@@ -533,7 +570,14 @@ function Entry({ e, showDate, onDelete }) {
       {showDate && (
         <td className="px-4 py-2.5 text-gray-600">{formatDate(e.created_at)}</td>
       )}
-      <td className="px-4 py-2.5 text-gray-800">{e.category || "—"}</td>
+      <td className="px-4 py-2.5 text-gray-800">
+        {e.category || "—"}
+        {isPendingIncome(e) && (
+          <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+            ⏳ Pending
+          </span>
+        )}
+      </td>
       <td className="px-4 py-2.5">
         {isAdjust ? (
           <span className="text-xs text-gray-400">—</span>
@@ -578,8 +622,8 @@ function PaymentToggle({ value, onChange }) {
 
 // ---- Batch add: one date, many income lines ----
 
-// Income this line will record (for the running total preview).
-function lineIncome(line) {
+// The full sale value of a line (products + any charge, or the plain amount).
+function lineFullTotal(line) {
   const src = srcOf(line.sourceKey);
   if (!src) return 0;
   if (src.mode === "device") {
@@ -590,6 +634,14 @@ function lineIncome(line) {
     return items + (src.charge ? Number(line.amount) || 0 : 0);
   }
   return Number(line.amount) || 0; // simple + provider
+}
+
+// Income this line records NOW (for the running total preview). A pending line
+// only books the "paid now" part — the rest is tracked as a balance owed.
+function lineIncome(line) {
+  if (line.pending)
+    return Math.min(Number(line.paidNow) || 0, lineFullTotal(line));
+  return lineFullTotal(line);
 }
 
 // Validate one line; return an error message or null.
@@ -612,7 +664,50 @@ function validateLine(line) {
     if (!prov) return `${src.label}: choose a provider.`;
     if (!(Number(line.amount) > 0)) return `${src.label}: enter the recharge amount.`;
   }
+  if (line.pending && Number(line.paidNow) > lineFullTotal(line))
+    return `${src.label}: paid now can't be more than the total.`;
   return null;
+}
+
+// A credit-sale line: book only the paid part as income (under the source's
+// category), drop stock for any products, and track the balance on Pending.
+async function savePendingLine(line, date, products) {
+  const src = srcOf(line.sourceKey);
+  const total = lineFullTotal(line);
+  const paidNow = Math.min(Number(line.paidNow) || 0, total);
+  const paymentMethod = line.paymentMethod || PAYMENT_METHODS[0];
+
+  let description = `${src.label}${line.variant ? ` (${line.variant})` : ""}`;
+  const stockLines = [];
+  if (src.mode === "device") {
+    const names = [];
+    for (const it of line.items || []) {
+      if (!it.productId) continue;
+      const q = Number(it.qty) || 0;
+      const price = Number(it.sellPrice) || 0;
+      const prod = products.find((p) => p.id === it.productId);
+      if (q > 0) {
+        stockLines.push({ product_id: it.productId, quantity: q, total_amount: q * price });
+        names.push(`${q}×${prod?.name || "item"}`);
+      }
+    }
+    if (names.length) description += ` — ${names.join(", ")}`;
+  } else if (src.mode === "provider") {
+    const prov = line.provider === ADD_NEW ? line.newProvider.trim() : line.provider;
+    description += ` — ${prov}`;
+  }
+  if (line.note?.trim()) description += ` (${line.note.trim()})`;
+
+  await addPending({
+    customerName: line.customer,
+    description,
+    category: src.label,
+    total,
+    paidNow,
+    paymentMethod,
+    date,
+    stockLines,
+  });
 }
 
 // Persist one line (income row, and a stock-out Sale for device lines).
@@ -620,6 +715,9 @@ async function saveLine(line, date, products) {
   const src = srcOf(line.sourceKey);
   const createdAt = tsFromDate(date);
   const paymentMethod = line.paymentMethod || PAYMENT_METHODS[0];
+
+  // Partial payment → route through the pending (credit sale) flow instead.
+  if (line.pending) return savePendingLine(line, date, products);
 
   if (src.mode === "simple") {
     await addEntry("income", {
@@ -689,6 +787,9 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
     provider: INTERNET_PROVIDERS[0],
     newProvider: "",
     paymentMethod: PAYMENT_METHODS[0],
+    pending: false,
+    customer: "",
+    paidNow: "",
     note: "",
   });
 
@@ -901,6 +1002,9 @@ function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
       variant: s?.variants?.[0] || "",
       provider: INTERNET_PROVIDERS[0],
       newProvider: "",
+      pending: false,
+      customer: "",
+      paidNow: "",
     });
   };
 
@@ -1086,6 +1190,53 @@ function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
           }}
           fullWidth
         />
+      )}
+
+      {/* Partial payment (credit sale) — only for New Cable / Internet / Recharge */}
+      {allowsPending(src) && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-amber-800">
+            <input
+              type="checkbox"
+              checked={!!line.pending}
+              onChange={(e) => onChange({ pending: e.target.checked })}
+            />
+            ⏳ Partial payment (customer pays the rest later)
+          </label>
+          {line.pending && (
+            <div className="mt-2 space-y-2">
+              <TextField
+                label="Customer name"
+                size="small"
+                value={line.customer || ""}
+                onChange={(e) => onChange({ customer: e.target.value })}
+                fullWidth
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <TextField
+                  label="Paid now"
+                  type="number"
+                  size="small"
+                  value={line.paidNow || ""}
+                  onChange={(e) => onChange({ paidNow: e.target.value })}
+                  inputProps={{ min: 0, step: "any", max: lineFullTotal(line) || undefined }}
+                  InputProps={{
+                    startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+                  }}
+                  sx={{ width: 140 }}
+                />
+                <div className="text-sm text-amber-800">
+                  Total {formatCurrency(lineFullTotal(line))} · Balance{" "}
+                  <strong>
+                    {formatCurrency(
+                      Math.max(0, lineFullTotal(line) - (Number(line.paidNow) || 0))
+                    )}
+                  </strong>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="flex flex-wrap items-center gap-2">

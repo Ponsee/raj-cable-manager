@@ -38,6 +38,23 @@ export async function getProductsWithStock() {
   }));
 }
 
+// All sales (with the product name), for "best selling" reports. Each row:
+// { product_id, name, quantity, amount, created_at }.
+export async function getSales() {
+  const { data, error } = await supabase
+    .from("stock_transactions")
+    .select("product_id, quantity, total_amount, created_at, products(name)")
+    .eq("type", STOCK_TYPES.SALE);
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    product_id: r.product_id,
+    name: r.products?.name || "Product",
+    quantity: Number(r.quantity) || 0,
+    amount: Number(r.total_amount) || 0,
+    created_at: r.created_at,
+  }));
+}
+
 export async function getProduct(id) {
   const { data, error } = await supabase
     .from("products")
@@ -134,7 +151,7 @@ export async function getStockTransactions(productId) {
 // land on the same day.
 export async function addStockTransaction(
   tx,
-  { productName, incomeCategory, incomeNote, paymentMethod } = {}
+  { productName, incomeCategory, incomeNote, paymentMethod, cashAmount, onlineAmount } = {}
 ) {
   const { data, error } = await supabase
     .from("stock_transactions")
@@ -145,21 +162,42 @@ export async function addStockTransaction(
 
   const label = productName || "Product";
   if (tx.type === STOCK_TYPES.PURCHASE) {
+    const isSplit = paymentMethod === "Split";
+    const splitNote = isSplit
+      ? ` (Cash ₹${Number(cashAmount) || 0} + Online ₹${Number(onlineAmount) || 0})`
+      : "";
     const note = `${label} — ${tx.quantity} purchased${
       tx.vendor_name ? ` from ${tx.vendor_name}` : ""
-    }`;
-    const { data: exp, error: e } = await supabase
+    }${splitNote}`;
+    const expenseRow = {
+      amount: tx.total_amount,
+      category: PURCHASE_EXPENSE_CATEGORY,
+      note,
+      ...(paymentMethod ? { payment_method: paymentMethod } : {}),
+      ...(isSplit
+        ? {
+            cash_amount: Number(cashAmount) || 0,
+            online_amount: Number(onlineAmount) || 0,
+          }
+        : {}),
+      ...(tx.created_at ? { created_at: tx.created_at } : {}),
+    };
+    let { data: exp, error: e } = await supabase
       .from("expenses")
-      .insert([
-        {
-          amount: tx.total_amount,
-          category: PURCHASE_EXPENSE_CATEGORY,
-          note,
-          ...(tx.created_at ? { created_at: tx.created_at } : {}),
-        },
-      ])
+      .insert([expenseRow])
       .select("id")
       .single();
+    // If the payment columns aren't there yet (migration not run), insert without them.
+    if (e && /payment_method|cash_amount|online_amount/.test(e.message || "")) {
+      /* eslint-disable no-unused-vars */
+      const { payment_method, cash_amount, online_amount, ...rest } = expenseRow;
+      /* eslint-enable no-unused-vars */
+      ({ data: exp, error: e } = await supabase
+        .from("expenses")
+        .insert([rest])
+        .select("id")
+        .single());
+    }
     if (e) throw e;
     // Link this stock row to its expense so a purchase delete removes both.
     // Ignored if the expense_id column isn't there yet (migration not run).
@@ -256,6 +294,79 @@ export async function recordStockLoss({
   );
 }
 
+// Customer return: an item comes back onto the shelf (stock IN) and, if you
+// refunded the customer, money goes OUT as a "Customer refund" expense (carrying
+// the Cash/Online method). The refund expense is linked to the return stock row
+// so they can be removed together. No refund → just stock back, no money entry.
+export async function recordReturn({
+  productId,
+  productName,
+  quantity,
+  refund = false,
+  refundAmount = 0,
+  paymentMethod,
+  note,
+  date = "",
+}) {
+  const createdAt = purchaseTimestamp(date);
+  const qty = Number(quantity) || 0;
+  const amount = refund ? Number(refundAmount) || 0 : 0;
+
+  const { data, error } = await supabase
+    .from("stock_transactions")
+    .insert([
+      {
+        product_id: productId,
+        type: STOCK_TYPES.RETURN,
+        quantity: qty,
+        price_per_unit: 0,
+        total_amount: amount, // the refund value (0 when no money was returned)
+        note: note?.trim() || "Customer return",
+        ...(createdAt ? { created_at: createdAt } : {}),
+      },
+    ])
+    .select("id")
+    .single();
+  if (error) throw error;
+
+  if (amount > 0) {
+    const expenseRow = {
+      amount,
+      category: "Customer refund",
+      note: `Refund${productName ? ` — ${productName}` : ""}${
+        note?.trim() ? ` (${note.trim()})` : ""
+      }`,
+      ...(paymentMethod ? { payment_method: paymentMethod } : {}),
+      ...(createdAt ? { created_at: createdAt } : {}),
+    };
+    let { data: exp, error: e } = await supabase
+      .from("expenses")
+      .insert([expenseRow])
+      .select("id")
+      .single();
+    if (e && /payment_method/.test(e.message || "")) {
+      /* eslint-disable no-unused-vars */
+      const { payment_method, ...rest } = expenseRow;
+      /* eslint-enable no-unused-vars */
+      ({ data: exp, error: e } = await supabase
+        .from("expenses")
+        .insert([rest])
+        .select("id")
+        .single());
+    }
+    if (e) throw e;
+    // Link the refund expense to the return movement (for combined delete).
+    if (exp?.id && data?.id) {
+      await supabase
+        .from("stock_transactions")
+        .update({ expense_id: exp.id })
+        .eq("id", data.id);
+    }
+  }
+
+  return data;
+}
+
 // Subcategory / brand values used before, to suggest again (e.g. TCCL, Airtel).
 export async function getSubcategorySuggestions() {
   const { data, error } = await supabase
@@ -314,6 +425,9 @@ export async function addBulkPurchase({
   lines,
   discount = 0,
   transport = 0,
+  paymentMethod,
+  cashAmount,
+  onlineAmount,
   purchaseDate = "",
 }) {
   const createdAt = purchaseTimestamp(purchaseDate);
@@ -359,20 +473,41 @@ export async function addBulkPurchase({
   ]
     .filter(Boolean)
     .join(", ");
-  const { data: exp, error: e2 } = await supabase
+  const isSplit = paymentMethod === "Split";
+  const splitNote = isSplit
+    ? ` (Cash ₹${Number(cashAmount) || 0} + Online ₹${Number(onlineAmount) || 0})`
+    : "";
+  const expenseRow = {
+    amount: total,
+    category: "Product purchase",
+    note: `Bulk purchase${vendorName ? ` from ${vendorName}` : ""}: ${
+      lines.length
+    } item(s)${extras ? ` (${extras})` : ""}${splitNote}`,
+    ...(paymentMethod ? { payment_method: paymentMethod } : {}),
+    ...(isSplit
+      ? {
+          cash_amount: Number(cashAmount) || 0,
+          online_amount: Number(onlineAmount) || 0,
+        }
+      : {}),
+    ...(createdAt ? { created_at: createdAt } : {}),
+  };
+  let { data: exp, error: e2 } = await supabase
     .from("expenses")
-    .insert([
-      {
-        amount: total,
-        category: "Product purchase",
-        note: `Bulk purchase${vendorName ? ` from ${vendorName}` : ""}: ${
-          lines.length
-        } item(s)${extras ? ` (${extras})` : ""}`,
-        ...(createdAt ? { created_at: createdAt } : {}),
-      },
-    ])
+    .insert([expenseRow])
     .select("id")
     .single();
+  // If the payment columns aren't there yet (migration not run), insert without them.
+  if (e2 && /payment_method|cash_amount|online_amount/.test(e2.message || "")) {
+    /* eslint-disable no-unused-vars */
+    const { payment_method, cash_amount, online_amount, ...rest } = expenseRow;
+    /* eslint-enable no-unused-vars */
+    ({ data: exp, error: e2 } = await supabase
+      .from("expenses")
+      .insert([rest])
+      .select("id")
+      .single());
+  }
   if (e2) throw e2;
 
   // Link every stock row in this batch to the expense (for batch delete).
@@ -388,6 +523,39 @@ export async function addBulkPurchase({
   }
 
   // Update each product's latest selling price.
+  for (const l of lines) {
+    if (Number(l.selling_price) > 0) {
+      await supabase
+        .from("products")
+        .update({ selling_price: Number(l.selling_price) })
+        .eq("id", l.product_id);
+    }
+  }
+}
+
+// Opening stock: record the quantities you already had on the shelf. Adds stock
+// (type "opening") but creates NO expense and NO income — it's not money moving
+// now. Buying price and vendor are optional. Each line:
+//   { product_id, quantity, price_per_unit?, selling_price?, vendor_id?, vendor_name? }
+export async function addOpeningStockBatch({ lines, asOfDate = "" }) {
+  const createdAt = purchaseTimestamp(asOfDate);
+  const rows = lines.map((l) => ({
+    product_id: l.product_id,
+    type: STOCK_TYPES.OPENING,
+    quantity: Number(l.quantity) || 0,
+    price_per_unit: Number(l.price_per_unit) || 0,
+    selling_price: Number(l.selling_price) || null,
+    total_amount: (Number(l.quantity) || 0) * (Number(l.price_per_unit) || 0),
+    vendor_id: l.vendor_id || null,
+    vendor_name: l.vendor_name || null,
+    note: "Opening stock",
+    ...(createdAt ? { created_at: createdAt } : {}),
+  }));
+
+  const { error } = await supabase.from("stock_transactions").insert(rows);
+  if (error) throw error;
+
+  // Save/refresh each product's selling price when one was entered.
   for (const l of lines) {
     if (Number(l.selling_price) > 0) {
       await supabase
