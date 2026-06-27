@@ -1,8 +1,19 @@
-# Raj Cable Manager — Module Reference (Workers · Products · Vendors · Income · Expense)
+# Raj Cable Manager — Module Reference (Workers · Products · Vendors · Income · Expense · Pending)
 
-Last updated: 2026-05-30. This documents the features built so far in the
-**Workers**, **Products**, **Vendors**, **Income**, and **Expense** modules,
-plus the setup steps (migrations / Supabase config) needed for them to work.
+Last updated: 2026-06-27. This documents the features built so far in the
+**Workers**, **Products**, **Vendors**, **Income**, **Expense**, and
+**Pending Payments** modules, plus the setup steps (migrations / Supabase
+config) needed for them to work.
+
+> **What's new (2026-06-27):** **Cash / Online / Split** payment method on
+> worker pay, purchases (single + bulk), and refunds — with a Split mode that
+> auto-fills the other amount and caps at the total. **Opening Stock** (load
+> stock you already have, no expense). **Returns** (item back to stock, optional
+> refund). **Pending Payments** / customer credit (pay part now, collect the
+> balance later). Expense page **payment filter chips** + "Paid via" column.
+> Dashboard **Cash vs Online** charts + **Best selling products**. New income
+> source **🏠 Home Collection**, and a **partial-payment** option on New Cable /
+> New Internet / Internet Recharge.
 
 > **UI note:** the app now uses **MUI (Material UI)**. Shared UI primitives
 > (`Button`, `Modal`, `StatCard`, `PageHeader`, `DateRangePicker`) and the
@@ -33,6 +44,9 @@ plus the setup steps (migrations / Supabase config) needed for them to work.
 | `2026-05-30_purchase_discount_transport.sql` | `stock_transactions.discount` + `transport` (per bulk order) |
 | `2026-05-30_purchase_expense_link.sql` | `stock_transactions.expense_id` → links a purchase to its expense (for batch delete) |
 | `2026-05-30_worker_tx_expense_link.sql` | `worker_transactions.expense_id` → links worker pay to its expense (for delete) |
+| `2026-06-27_payment_method_expense_worker.sql` | `expenses.payment_method` + `worker_transactions.payment_method` (Cash/Online) |
+| `2026-06-27_split_payment.sql` | `expenses.cash_amount` + `online_amount` (the breakdown for a **Split** payment) |
+| `2026-06-27_pending_payments.sql` | `pending_payments` table (customer credit) incl. `category` column + RLS |
 
 **Storage:** the `product-images` bucket is created by the migration above
 (running `2026-05-30_product_images_bucket.sql` in the SQL Editor). You can also
@@ -48,6 +62,27 @@ but then you still need upload policies — running the migration is easier.
 > `code`/`image_urls`). Run them to get the full behavior.
 
 > `schema.sql` is the full fresh-setup script and already includes all of the above.
+
+---
+
+## 💵 Payment methods (Cash / Online / Split) — cross-cutting
+
+Both money tables carry **how the money moved**:
+- **`income.payment_method`** and **`expenses.payment_method`** = `Cash` |
+  `Online` | `Split` (old rows with no value count as **Cash**).
+- For a **Split** (part cash + part online in one payment), the breakdown is
+  stored on the expense as **`cash_amount`** + **`online_amount`** (they sum to
+  `amount`). `PAYMENT_METHODS` = `["Cash","Online"]`; `PAYMENT_METHODS_SPLIT`
+  adds `"Split"` (constants).
+- **Split UI behaviour (everywhere it appears):** picking **Split** shows two
+  boxes (Cash ₹ / Online ₹); typing one **auto-fills the other** as the
+  remainder, each box is **capped (`max`) at the total**, and save validates
+  that the two add up to the payout/total.
+- **Where it's used:** Worker Add Transaction, single-product **Purchase** &
+  **Sale**, Vendor **Bulk Purchase**, customer **Refund**, and Pending
+  collections. Income sales use Cash/Online (no Split). The chosen method flows
+  onto the auto-created expense/income, and Split rows also embed the breakdown
+  in the note. All services degrade gracefully if the columns aren't there yet.
 
 ---
 
@@ -161,6 +196,11 @@ but then you still need upload policies — running the migration is easier.
 - One **Date** field for **every** type (default today, `max` = today) lets you
   backdate any entry; `txTimestamp()` keeps the current time so same-day rows stay
   ordered, and the date flows to the auto-created expense too.
+- **Paid via** — Cash / Online / **Split** (default Cash), shown for every type
+  except `increment` (a raise, no cash out). The method is stored on
+  `worker_transactions.payment_method` **and** the auto-created expense; a Split
+  carries the cash/online breakdown onto the expense and into the note. Cash +
+  Online must add up to the net being paid (live hint + auto-fill).
 - Salary and contract-work breakdowns show **Current advance → Reduce → Remaining
   advance → Net to pay**, updating live as you type the reduction.
 - Modal is medium-sized (`size="md"`) and compact.
@@ -214,13 +254,43 @@ but then you still need upload policies — running the migration is easier.
 - `isLowStock(stock, min)`, `pricesByVendor(txs)` (cheapest-first vendor comparison).
 
 ### Stock entry types (`stock_transactions.type`)
-- **Purchase** 🛒 — stock in; creates an **Expense**; per-batch **selling price**;
-  pick a **vendor**.
-- **Sale** 💰 — stock out; creates an **Income**; pre-filled from selling price;
-  blocked if it exceeds available stock.
+- **Purchase** 🛒 — stock in; creates an **Expense** (with Cash/Online/**Split**);
+  per-batch **selling price**; pick a **vendor**.
+- **Sale** 💰 — stock out; creates an **Income** (Cash/Online); pre-filled from
+  selling price; blocked if it exceeds available stock.
 - **Used in service** 🔧 — stock out, **no income** (materials consumed on a job).
 - **Loss / damage** ⚠️ — stock out, **no income**; written off as damaged /
   missing / defective / returned. Reason stored in `note` (`LOSS_REASONS`).
+- **Opening stock** 📦 — stock **in**, **no expense** (stock you already had).
+- **Return** ↩️ — stock **in** (customer brought it back), optional **refund** out.
+
+The Add Stock modal (Product Details) offers Purchase / Sale / Used / **Opening
+stock**; Returns + Loss are their own buttons. Stock history shows a coloured
+badge per type with a per-type filter.
+
+### Opening stock (load what you already have — Business Rule note)
+- For stock that was on the shelf **before** you started using the app. Adds
+  quantity with **no expense** (it's not money moving now); **buying price** &
+  **vendor** are optional; **selling price** saved on the product.
+- `calcStock` counts `opening` as stock-in; a known cost feeds valuation
+  (`lastPurchasePrice`) but is **not** added to `purchaseValue`.
+- **Single:** Product Details → Add Stock → 📦 Opening stock.
+- **Bulk:** Products list → **📦 Opening Stock** (`components/products/OpeningStockModal.jsx`)
+  — one As-of date + a row per product (search or ➕ add new, qty, optional
+  buy ₹, sell ₹, optional vendor). Service: `addOpeningStockBatch()`.
+
+### Returns (customer brings an item back)
+- `components/products/ReturnModal.jsx` (shared: Product Details = fixed product,
+  Income page = pick any). Adds the item **back to stock** and, with a **"Refund
+  money?"** toggle, optionally records the refund as money **out**.
+- Service `recordReturn()`: inserts a `return` stock-in row; if refunded, creates
+  a **"Customer refund"** expense (Cash/Online) linked via `expense_id`. The
+  refund posts as an expense so **net profit drops by the refund** (offsetting
+  the original sale). No refund → just stock back, no money entry.
+
+### Best-seller tag
+- The products list flags the **top 5 by all-time units sold** with a **🔥 Best
+  seller** badge (computed from each product's `soldQty`).
 
 ### Report Loss / Damage (`components/products/StockLossModal.jsx`)
 - A shared "Report Loss / Damage" action on **Product Details** (product fixed)
@@ -279,6 +349,8 @@ but then you still need upload policies — running the migration is easier.
   product (with "➕ Add new product" inline), qty, cost, sell price per line;
   order-level **Discount** and **Transport cost**; records one purchase row per
   line + one combined **Expense** (`subtotal − discount + transport`).
+  - **Paid via** Cash / Online / **Split** on the order — stored on the combined
+    expense (Split shows a 💵 Cash / 📱 Online breakdown in the total box).
   - `discount`/`transport` are stored on the **first row** of the batch (others 0)
     so summing a batch is correct; each purchase row is linked to its `expense_id`.
 - **Purchase history**: **By batch** view (one order = one block, with a
@@ -297,7 +369,8 @@ but then you still need upload policies — running the migration is easier.
 ### Sources & batch entry
 - **Add Income** is a batch form (one date, many entries). `INCOME_SOURCES`
   drive the fields per entry via a `mode`:
-  - `simple` (Daily Collection, Cable Collection, Other) → just an amount.
+  - `simple` (Daily Collection, **Home Collection** 🏠, Cable Collection, Other)
+    → just an amount.
   - `device` (Shop Collection, New Cable HD/SD, New Internet) → **multiple
     products** (each qty + price), optional **charge** (e.g. install). Priced
     item → **Sale** (income + stock out); ₹0 item → **Used** (stock out, no income).
@@ -315,6 +388,20 @@ but then you still need upload policies — running the migration is easier.
 - Per-entry **Paid via** toggle: **Cash** or **Online** (Online = GPay/PhonePe/UPI).
   Stored on `income.payment_method`. Anything non-Cash is treated as Online
   (covers old GPay/Other rows). Service: `addEntry`/`addStockTransaction` carry it.
+
+### Partial payment (credit sale) on New Cable / New Internet / Internet Recharge
+- Those three sources show a **⏳ Partial payment** checkbox per entry. Tick it →
+  **Customer name** + **Paid now** fields (with a live Total · Balance readout).
+- On save (`savePendingLine`): only the **Paid now** part is booked as income,
+  **under that source's category** (e.g. "New Cable"); device products still
+  leave stock; the **balance** is tracked on the **Pending** page (`addPending`
+  with `category` + `stockLines`). Collecting later books under the same category.
+- Income rows from a credit sale show a **⏳ Pending** badge (detected from the
+  note markers `(paid X of Y)` / `(balance collected)`).
+
+### Return entry (on the Income page)
+- A **↩️ Return** button (next to Report Loss) opens the shared `ReturnModal`
+  (pick any product) — see Products → Returns. Adds stock back ± refund.
 
 ### Cash over/short adjustment
 - A single **Cash extra (+) / short (−)** field (separate from the source list).
@@ -352,6 +439,11 @@ but then you still need upload policies — running the migration is easier.
   Today · Avg/day · **Top category** · Entries.
 - **By-category breakdown** list (each category + total + % bar) for the range.
 - Filter row = search + category filter + **Export Excel** (month-wise sheets).
+- **Payment filter chips** (config `paymentFilter`): **All / Cash / Online /
+  Split** — filters the ledger (and so all cards + breakdown) by how it was paid.
+  A **"Paid via"** column shows 💵 Cash / 📱 Online / 🔀 split breakdown per row.
+  `financeService.getEntries` now also fetches `payment_method` + `cash_amount` /
+  `online_amount` for expenses (graceful fallback).
 - **Category** in Add Expense is a **MUI Autocomplete** combobox (pick or type new);
   defaults include Staff salary, Product purchase, Electricity, Fuel, **Water,
   Parcel, For Home**, Office expenses, Other.
@@ -369,14 +461,39 @@ but then you still need upload policies — running the migration is easier.
 - **Auto-populated from:** product **purchases** (single + bulk) and **worker pay**
   (salary/advance/payment/bonus/petrol/contract-work — see Workers). Plus any
   manual entries (Electricity, Fuel, Office, etc.).
-- **Auto rows (🔒):** auto-created rows (Product purchase / worker categories,
-  config `lockedCategories`) are marked **🔒 auto**. They can still be deleted, but
+- **Auto rows (🔒):** auto-created rows (Product purchase / worker categories /
+  **Customer refund**, config `lockedCategories`) are marked **🔒 auto**. They can still be deleted, but
   the confirm shows a **warning** to delete from the source (purchase batch / worker
   entry) instead — so stock & worker records stay in sync. (The warning escape-hatch
   lets you clean up orphaned auto-expenses left by pre-link deletes.)
 - `services/financeService.js`: `getEntries` (income also selects
   `payment_method`, `stock_tx_id`, with graceful fallbacks), `addEntry`,
   `updateEntry`, `deleteEntry`, `deleteIncomeEntry`, `deleteIncomeBatch`.
+
+---
+
+## ⏳ Pending Payments (`pages/Pending.jsx`, `/pending`) — customer credit
+
+A "khata" for sales where the customer **pays part now and owes the rest**.
+Table `pending_payments` (`customer_name`, `product_id`, `description`,
+`category`, `total_amount`, `paid_amount`, `status` open/closed,
+`payment_method`, `settled_at`). Service `services/pendingService.js`.
+
+- **Cash-accurate:** income is booked **only as money is actually received** —
+  never the full amount up front. The unpaid **balance** lives here until
+  collected, so profit isn't inflated by money you don't have.
+- **Add (`addPending`):** records the **Paid now** part as income (under
+  `category`, default "Product sales"), drops stock for any products handed over
+  (`productId`/`quantity` or multi-product `stockLines`, a Sale movement with
+  **no** income), and stores the balance. Created from the **Pending** page or
+  the **Income** page (shared `components/finance/AddPendingModal.jsx`), and from
+  the **partial-payment** toggle on New Cable / New Internet / Internet Recharge.
+- **Collect (`collectPayment`):** books the collected amount as income (under the
+  stored `category`), bumps `paid_amount`, closes the record when fully paid.
+- **Page:** cards (Outstanding · Customers owing · Total credit given ·
+  Collected), **Open / All** chips, a table per balance with **Collect** +
+  **Delete**. Nav: **⏳ Pending** (Finance group). Delete removes the credit note
+  only — it does **not** reverse booked income or restock (warned in the dialog).
 
 ---
 
@@ -406,9 +523,12 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
   (range) · Net profit · Cash · Online · Low-stock · Stock value · **Worker balance
   due** *(admin)* · **Pending approvals** *(admin, when >0)*.
 - **Charts:** Income vs Expense per day (shared `IncomeExpenseChart`), **Income by
-  source** pie, **Expense by category** pie, and a **Last 6 months** income/expense
-  bar (independent of the range). Pies group small slices into "Other".
-- **Recent activity** — latest 8 income/expense entries.
+  source** pie, **Expense by category** pie, **Cash vs Online** (income & expense
+  bar), **Income/Expense — Cash vs Online by category** (stacked bars, Split-aware,
+  top 7 + "Other"), and a **Last 6 months** income/expense bar. Pies group small
+  slices into "Other".
+- **🏆 Best selling products** — top 5 by **units sold** in the range (units +
+  revenue), via `getSales()`. Shown beside **Recent activity** (latest 8 entries).
 - **Export Excel** — `xlsx` workbook: a **Summary** sheet + **one sheet per month**
   of combined income/expense transactions. Worker queries only run for admins.
 
@@ -432,13 +552,17 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 | `components/ui/PageHeader.jsx` | MUI Typography title row |
 | `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
 | `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / This year / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()` |
-| `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals) |
+| `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals), **payment filter chips + "Paid via" column** (config `paymentFilter`) |
 | `components/finance/IncomeExpenseChart.jsx` | Shared income-vs-expense bar chart (Dashboard) |
 | `components/products/ProductPicker.jsx` | Searchable product Autocomplete **with image** (+ `renderProductOption`) |
 | `components/products/StockLossModal.jsx` | Report loss/damage (Income + Product Details) |
+| `components/products/ReturnModal.jsx` | Customer return → stock back ± refund (Income + Product Details) |
+| `components/products/OpeningStockModal.jsx` | Bulk **Opening Stock** entry (no expense) |
+| `components/finance/AddPendingModal.jsx` | Add a **credit sale** (shared by Pending + Income pages) |
 | `components/products/ProductImages.jsx` | Multi-image picker (upload + camera, max 5) |
 | `utils/excel.js` | `exportMonthlyExcel()` — `.xlsx` with a Summary sheet + one sheet per month |
 | `pages/PurchasePlan.jsx` | "What to buy this month" budget analyzer (`@mui/x-charts` not used here; uses `getPurchasePlan`) |
+| `pages/Pending.jsx` | Pending Payments / customer credit page (+ Collect modal); uses `services/pendingService.js` |
 | `components/forms/WorkerForm.jsx` | Shared worker add/edit fields + pricing helpers |
 | `components/forms/ProductForm.jsx` | Shared product add/edit fields (code + images) |
 | `components/forms/VendorForm.jsx` | Shared vendor add/edit fields |
@@ -453,6 +577,10 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 2. Stock & worker balances are always computed from transactions.
 3. Purchases auto-create Expenses; Sales auto-create Income; worker cash-outs
    auto-create Expenses; product loss reduces stock with no money entry.
+   **Opening stock** adds stock with **no** money entry; a **return** adds stock
+   back with an **optional refund** expense; a **credit sale** books income only
+   as it's collected (balance tracked in Pending). All money entries record
+   **Cash / Online / Split**.
 4. Deletes always go through a confirmation dialog, and **stay consistent**:
    - Deleting a product-sale **income** (row/day) removes its stock movement → stock restored.
    - Deleting a **purchase batch** removes its stock movements + linked expense.

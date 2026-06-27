@@ -76,11 +76,18 @@ export const STOCK_TYPES = {
   SALE: "sale", // stock out + income
   USAGE: "usage", // stock out for service work (no income)
   LOSS: "loss", // stock out because it was damaged / missing / returned (no income)
+  OPENING: "opening", // stock you already had — stock in, NO expense (cost optional)
+  RETURN: "return", // customer brought an item back — stock in, optional refund out
 };
 
 // ---- Payment methods (how money was received) ----
 // "Online" covers GPay / PhonePe / any UPI or bank transfer.
 export const PAYMENT_METHODS = ["Cash", "Online"];
+// "Split" = part Cash + part Online in one payment (the two amounts are stored
+// on the expense as cash_amount / online_amount). Used for money going OUT
+// (worker pay, purchases), where a single payout can be split.
+export const PAYMENT_SPLIT = "Split";
+export const PAYMENT_METHODS_SPLIT = ["Cash", "Online", "Split"];
 
 // ---- Stock loss reasons (why stock was written off) ----
 export const LOSS_REASONS = [
@@ -159,6 +166,7 @@ export const INCOME_SOURCES = [
     charge: false,
   },
   { key: "daily_collection", label: "Daily Collection", icon: "🧾", mode: "simple" },
+  { key: "home_collection", label: "Home Collection", icon: "🏠", mode: "simple" },
   {
     key: "new_cable",
     label: "New Cable",
@@ -207,6 +215,7 @@ export const NAV_ITEMS = [
 
   { label: "Income", path: "/income", icon: "🟢", group: "Finance" },
   { label: "Expense", path: "/expense", icon: "🔴", group: "Finance" },
+  { label: "Pending", path: "/pending", icon: "⏳", group: "Finance" },
 
   { label: "Products", path: "/products", icon: "📦", group: "Inventory" },
   { label: "Vendors", path: "/vendors", icon: "🏪", group: "Inventory" },

@@ -15,24 +15,24 @@ function entryTimestamp(dateStr) {
 export async function getEntries(table) {
   const base = "id, amount, category, note, created_at";
 
-  if (table !== "income") {
-    const { data, error } = await supabase
-      .from(table)
-      .select(base)
-      .order("created_at", { ascending: false });
-    if (error) throw error;
-    return data || [];
-  }
-
-  // For income, try richest first and fall back if a column/migration is missing,
-  // so the page always loads even before the migrations are run. We select
-  // stock_tx_id directly (no embedded join) so deleting can always find and
-  // remove the linked stock movement to restore stock.
-  const variants = [
-    `${base}, payment_method, stock_tx_id`,
-    `${base}, payment_method`,
-    base,
-  ];
+  // Try richest first and fall back if a column/migration is missing, so the
+  // page always loads even before the migrations are run.
+  // - income: select stock_tx_id directly (no embedded join) so deleting can
+  //   always find and remove the linked stock movement to restore stock.
+  // - expenses: pull the payment columns (incl. the Split breakdown) so the
+  //   page can filter / chart by Cash / Online / Split.
+  const variants =
+    table === "income"
+      ? [
+          `${base}, payment_method, stock_tx_id`,
+          `${base}, payment_method`,
+          base,
+        ]
+      : [
+          `${base}, payment_method, cash_amount, online_amount`,
+          `${base}, payment_method`,
+          base,
+        ];
   for (const cols of variants) {
     const { data, error } = await supabase
       .from(table)

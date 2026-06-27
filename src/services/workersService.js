@@ -100,33 +100,61 @@ function workerExpenseAmount(tx) {
   return Number(tx.amount) || 0;
 }
 
+// Insert a row, retrying without the payment columns if they aren't there yet
+// (migration not run) — so the app still works before the DB is updated.
+async function insertRow(table, row, select) {
+  let res = await supabase.from(table).insert([row]).select(select).single();
+  if (
+    res.error &&
+    /payment_method|cash_amount|online_amount/.test(res.error.message || "")
+  ) {
+    /* eslint-disable no-unused-vars */
+    const { payment_method, cash_amount, online_amount, ...rest } = row;
+    /* eslint-enable no-unused-vars */
+    res = await supabase.from(table).insert([rest]).select(select).single();
+  }
+  return res;
+}
+
 // Business Rule 1: we only ever INSERT transactions, never edit old ones.
 // Cash-out transactions also create a matching Expense row, so the business's
 // total expenses include worker pay. Pass { workerName } to label the expense.
-export async function addWorkerTransaction(tx, { workerName } = {}) {
-  const { data, error } = await supabase
-    .from("worker_transactions")
-    .insert([tx])
-    .select()
-    .single();
+// tx.payment_method ("Cash"/"Online"/"Split") flows onto both the worker row and
+// the auto-created expense. For "Split", pass cashAmount/onlineAmount — they're
+// stored on the expense (cash_amount/online_amount) and shown in the note.
+export async function addWorkerTransaction(
+  tx,
+  { workerName, cashAmount, onlineAmount } = {}
+) {
+  const { data, error } = await insertRow("worker_transactions", tx, "*");
   if (error) throw error;
 
   const category = WORKER_EXPENSE_CATEGORY[tx.type];
   const amount = workerExpenseAmount(tx);
   if (category && amount > 0) {
-    const note = workerName ? `${category} — ${workerName}` : category;
-    const { data: exp, error: e } = await supabase
-      .from("expenses")
-      .insert([
-        {
-          amount,
-          category,
-          note,
-          ...(tx.created_at ? { created_at: tx.created_at } : {}),
-        },
-      ])
-      .select("id")
-      .single();
+    const isSplit = tx.payment_method === "Split";
+    const splitNote = isSplit
+      ? ` (Cash ₹${Number(cashAmount) || 0} + Online ₹${Number(onlineAmount) || 0})`
+      : "";
+    const note =
+      (workerName ? `${category} — ${workerName}` : category) + splitNote;
+    const { data: exp, error: e } = await insertRow(
+      "expenses",
+      {
+        amount,
+        category,
+        note,
+        ...(tx.payment_method ? { payment_method: tx.payment_method } : {}),
+        ...(isSplit
+          ? {
+              cash_amount: Number(cashAmount) || 0,
+              online_amount: Number(onlineAmount) || 0,
+            }
+          : {}),
+        ...(tx.created_at ? { created_at: tx.created_at } : {}),
+      },
+      "id"
+    );
     if (e) throw e;
     // Link the worker transaction to its expense so a delete removes both.
     // Ignored if the expense_id column isn't there yet (migration not run).

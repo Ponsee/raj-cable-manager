@@ -12,7 +12,7 @@ import DateRangePicker, {
   currentMonthRange,
 } from "../components/ui/DateRangePicker";
 import { getEntries } from "../services/financeService";
-import { getProductsWithStock } from "../services/productsService";
+import { getProductsWithStock, getSales } from "../services/productsService";
 import { getWorkersWithBalance } from "../services/workersService";
 import { getPendingCount } from "../services/usersService";
 import { isLowStock } from "../utils/productCalc";
@@ -23,6 +23,12 @@ import { ROLES } from "../constants";
 const dayKey = (ts) => new Date(ts).toISOString().split("T")[0];
 const sum = (arr) => arr.reduce((s, e) => s + (Number(e.amount) || 0), 0);
 const payOf = (e) => ((e.payment_method || "Cash") === "Cash" ? "Cash" : "Online");
+// The cash part of a row — handles Split rows (cash_amount), else all-or-nothing.
+const cashOf = (e) => {
+  const m = e.payment_method || "Cash";
+  if (m === "Split") return Number(e.cash_amount) || 0;
+  return m === "Cash" ? Number(e.amount) || 0 : 0;
+};
 
 // Group rows by a key field → [{ key, amount }] sorted desc.
 function breakdown(rows, keyName) {
@@ -36,6 +42,37 @@ function breakdown(rows, keyName) {
     .sort((a, b) => b.amount - a.amount);
 }
 
+// Group rows by category, splitting each into cash / online (Split-aware).
+// → [{ key, cash, online }] sorted by total desc.
+function payBreakdown(rows) {
+  const map = {};
+  for (const r of rows) {
+    const k = r.category || "Other";
+    if (!map[k]) map[k] = { key: k, cash: 0, online: 0 };
+    const c = cashOf(r);
+    map[k].cash += c;
+    map[k].online += (Number(r.amount) || 0) - c;
+  }
+  return Object.values(map).sort(
+    (a, b) => b.cash + b.online - (a.cash + a.online)
+  );
+}
+
+// Keep the top `max` categories; fold the rest into a single "Other" row.
+function topWithOther(rows, max = 7) {
+  const top = rows.slice(0, max);
+  const rest = rows.slice(max);
+  if (rest.length) {
+    top.push(
+      rest.reduce((a, r) => ({ key: "Other", cash: a.cash + r.cash, online: a.online + r.online }), {
+        cash: 0,
+        online: 0,
+      })
+    );
+  }
+  return top;
+}
+
 export default function Dashboard() {
   const { user, profile, role } = useAuth();
   const navigate = useNavigate();
@@ -45,6 +82,7 @@ export default function Dashboard() {
   const [income, setIncome] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [pending, setPending] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -54,14 +92,16 @@ export default function Dashboard() {
     (async () => {
       setLoading(true);
       try {
-        const [inc, exp, prods] = await Promise.all([
+        const [inc, exp, prods, sls] = await Promise.all([
           getEntries("income"),
           getEntries("expenses"),
           getProductsWithStock(),
+          getSales().catch(() => []),
         ]);
         setIncome(inc);
         setExpenses(exp);
         setProducts(prods);
+        setSales(sls);
         if (isAdmin) {
           getWorkersWithBalance().then(setWorkers).catch(() => {});
           getPendingCount().then(setPending).catch(() => {});
@@ -84,9 +124,33 @@ export default function Dashboard() {
   const net = totalIncome - totalExpense;
   const cash = sum(inInc.filter((e) => payOf(e) === "Cash"));
   const online = totalIncome - cash;
+  // Expense split into cash / online (Split rows counted by their breakdown).
+  const expCash = inExp.reduce((s, e) => s + cashOf(e), 0);
+  const expOnline = totalExpense - expCash;
 
   const incomeBySource = breakdown(inInc, "category");
   const expenseByCategory = breakdown(inExp, "category");
+
+  // Best selling products in the range (by units sold).
+  const bestMap = {};
+  for (const s of sales) {
+    if (!inRange(s.created_at, range.start, range.end)) continue;
+    const m = (bestMap[s.product_id] ||= {
+      product_id: s.product_id,
+      name: s.name,
+      qty: 0,
+      revenue: 0,
+    });
+    m.qty += s.quantity;
+    m.revenue += s.amount;
+  }
+  const bestSellers = Object.values(bestMap)
+    .sort((a, b) => b.qty - a.qty)
+    .slice(0, 5);
+
+  // Per-category cash vs online (for the stacked charts).
+  const incPayByCat = topWithOther(payBreakdown(inInc));
+  const expPayByCat = topWithOther(payBreakdown(inExp));
 
   const lowStock = products.filter((p) => isLowStock(p.stock, p.minimum_stock));
   const stockValue = products.reduce((s, p) => s + (Number(p.stockValue) || 0), 0);
@@ -252,6 +316,75 @@ export default function Dashboard() {
         </ChartCard>
       </div>
 
+      {/* Cash vs Online */}
+      <div className="mb-6">
+        <ChartCard
+          title="Cash vs Online"
+          subtitle="Income & expense by payment method (range)"
+        >
+          {totalIncome === 0 && totalExpense === 0 ? (
+            <Empty />
+          ) : (
+            <div className="overflow-x-auto">
+              <BarChart
+                height={280}
+                xAxis={[{ scaleType: "band", data: ["Cash", "Online"] }]}
+                series={[
+                  { data: [cash, online], label: "Income", color: "#16a34a" },
+                  {
+                    data: [expCash, expOnline],
+                    label: "Expense",
+                    color: "#ef4444",
+                  },
+                ]}
+              />
+            </div>
+          )}
+        </ChartCard>
+      </div>
+
+      {/* Cash vs Online by category */}
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ChartCard
+          title="Income — Cash vs Online by source"
+          subtitle="Each source split by payment (range)"
+        >
+          {incPayByCat.length === 0 ? (
+            <Empty />
+          ) : (
+            <div className="overflow-x-auto">
+              <BarChart
+                height={300}
+                xAxis={[{ scaleType: "band", data: incPayByCat.map((r) => r.key) }]}
+                series={[
+                  { data: incPayByCat.map((r) => r.cash), label: "Cash", stack: "t", color: "#f59e0b" },
+                  { data: incPayByCat.map((r) => r.online), label: "Online", stack: "t", color: "#8b5cf6" },
+                ]}
+              />
+            </div>
+          )}
+        </ChartCard>
+        <ChartCard
+          title="Expense — Cash vs Online by category"
+          subtitle="Each category split by payment (range)"
+        >
+          {expPayByCat.length === 0 ? (
+            <Empty />
+          ) : (
+            <div className="overflow-x-auto">
+              <BarChart
+                height={300}
+                xAxis={[{ scaleType: "band", data: expPayByCat.map((r) => r.key) }]}
+                series={[
+                  { data: expPayByCat.map((r) => r.cash), label: "Cash", stack: "t", color: "#f59e0b" },
+                  { data: expPayByCat.map((r) => r.online), label: "Online", stack: "t", color: "#8b5cf6" },
+                ]}
+              />
+            </div>
+          )}
+        </ChartCard>
+      </div>
+
       {/* Monthly trend */}
       <div className="mb-6">
         <ChartCard title="Last 6 months" subtitle="Income vs expense by month">
@@ -268,9 +401,48 @@ export default function Dashboard() {
         </ChartCard>
       </div>
 
-      {/* Recent activity */}
-      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 font-semibold text-gray-800">Recent activity</h3>
+      {/* Best sellers + Recent activity */}
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 font-semibold text-gray-800">
+            🏆 Best selling products{" "}
+            <span className="text-xs font-normal text-gray-400">(range)</span>
+          </h3>
+          {bestSellers.length === 0 ? (
+            <div className="flex h-24 items-center justify-center text-sm text-gray-400">
+              No sales in this range.
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {bestSellers.map((p, i) => (
+                <div
+                  key={p.product_id || i}
+                  className="flex items-center justify-between py-2"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">
+                      {i + 1}
+                    </span>
+                    <p className="truncate text-sm font-medium text-gray-800">
+                      {p.name}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {p.qty} sold
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {formatCurrency(p.revenue)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 font-semibold text-gray-800">Recent activity</h3>
         {recent.length === 0 ? (
           <div className="flex h-24 items-center justify-center text-sm text-gray-400">
             No activity yet.
@@ -297,6 +469,7 @@ export default function Dashboard() {
             ))}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

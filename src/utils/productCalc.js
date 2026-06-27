@@ -9,6 +9,7 @@ export function calcStock(transactions = []) {
   let soldQty = 0;
   let usedQty = 0; // consumed in service work
   let lostQty = 0; // written off: damaged / missing / returned
+  let returnedQty = 0; // customer brought items back (stock in)
   let purchaseValue = 0; // ₹ spent buying
   let saleValue = 0; // ₹ earned selling
   let lossValue = 0; // ₹ value lost (at last cost)
@@ -26,6 +27,19 @@ export function calcStock(transactions = []) {
         lastPurchaseAt = t.created_at;
         lastPurchasePrice = Number(t.price_per_unit) || 0;
       }
+    } else if (t.type === STOCK_TYPES.OPENING) {
+      // Stock you already had. Counts toward stock, but it's NOT money spent now,
+      // so it does NOT add to purchaseValue. If a cost was entered, use it for
+      // valuation like a purchase price (only when it's the most recent figure).
+      purchasedQty += qty;
+      const price = Number(t.price_per_unit) || 0;
+      if (
+        price > 0 &&
+        (!lastPurchaseAt || new Date(t.created_at) > new Date(lastPurchaseAt))
+      ) {
+        lastPurchaseAt = t.created_at;
+        lastPurchasePrice = price;
+      }
     } else if (t.type === STOCK_TYPES.SALE) {
       soldQty += qty;
       saleValue += total;
@@ -33,10 +47,14 @@ export function calcStock(transactions = []) {
       usedQty += qty;
     } else if (t.type === STOCK_TYPES.LOSS) {
       lostQty += qty;
+    } else if (t.type === STOCK_TYPES.RETURN) {
+      // A returned item comes back onto the shelf. The refund (if any) is a
+      // money entry, not part of stock math.
+      returnedQty += qty;
     }
   }
 
-  const stock = purchasedQty - soldQty - usedQty - lostQty;
+  const stock = purchasedQty - soldQty - usedQty - lostQty + returnedQty;
   const stockValue = stock * lastPurchasePrice; // approx value at last cost
   lossValue = lostQty * lastPurchasePrice; // approx cost of what was lost
   return {
@@ -44,6 +62,7 @@ export function calcStock(transactions = []) {
     soldQty,
     usedQty,
     lostQty,
+    returnedQty,
     stock,
     purchaseValue,
     saleValue,

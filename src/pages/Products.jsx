@@ -5,6 +5,7 @@ import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import ProductForm, { emptyProductForm } from "../components/forms/ProductForm";
 import ScanToSellModal from "../components/products/ScanToSellModal";
+import OpeningStockModal from "../components/products/OpeningStockModal";
 import EditProductModal from "../components/products/EditProductModal";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import {
@@ -32,6 +33,7 @@ export default function Products() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [openingOpen, setOpeningOpen] = useState(false);
   const [editProduct, setEditProduct] = useState(null);
   const [confirmTarget, setConfirmTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -112,6 +114,15 @@ export default function Products() {
     ...new Set([...PRODUCT_CATEGORIES, ...products.map((p) => p.category).filter(Boolean)]),
   ];
 
+  // Top sellers (by all-time units sold) get a badge in the list.
+  const bestSellerIds = new Set(
+    [...products]
+      .filter((p) => (p.soldQty || 0) > 0)
+      .sort((a, b) => (b.soldQty || 0) - (a.soldQty || 0))
+      .slice(0, 5)
+      .map((p) => p.id)
+  );
+
   const filtered = products.filter((p) => {
     const matchesCategory =
       categoryFilter === "all" || p.category === categoryFilter;
@@ -130,7 +141,10 @@ export default function Products() {
         title="Products"
         subtitle="Inventory & stock"
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setOpeningOpen(true)}>
+              📦 Opening Stock
+            </Button>
             <Button variant="secondary" onClick={() => setScanOpen(true)}>
               📷 Scan to Sell
             </Button>
@@ -219,6 +233,11 @@ export default function Products() {
                               {p.code && (
                                 <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500">
                                   {p.code}
+                                </span>
+                              )}
+                              {bestSellerIds.has(p.id) && (
+                                <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                                  🔥 Best seller
                                 </span>
                               )}
                             </p>
@@ -323,6 +342,15 @@ export default function Products() {
         open={scanOpen}
         onClose={() => setScanOpen(false)}
         onSold={load}
+      />
+
+      <OpeningStockModal
+        open={openingOpen}
+        onClose={() => setOpeningOpen(false)}
+        onSaved={async () => {
+          setOpeningOpen(false);
+          await load();
+        }}
       />
 
       <EditProductModal

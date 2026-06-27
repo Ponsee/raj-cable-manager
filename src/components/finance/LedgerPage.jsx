@@ -48,7 +48,13 @@ export default function LedgerPage({ config }) {
     lockedCategories = [],
     lockedHint = "",
     unifiedAdd = false, // expense: also add worker pay / product purchase
+    paymentFilter = false, // show Cash / Online / Split filter chips
   } = config;
+
+  // Filter chips for how the money moved. "All" + the payment methods.
+  const PAY_CHIPS = ["all", "Cash", "Online", "Split"];
+  // A row's payment method (old rows with no value count as Cash, the DB default).
+  const payOf = (e) => e.payment_method || "Cash";
 
   const { role } = useAuth();
   const isAdmin = role === ROLES.ADMIN;
@@ -58,6 +64,7 @@ export default function LedgerPage({ config }) {
   const [range, setRange] = useState(currentMonthRange());
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("all");
+  const [payFilter, setPayFilter] = useState("all");
   const [addOpen, setAddOpen] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -97,6 +104,8 @@ export default function LedgerPage({ config }) {
   const filtered = entries.filter((e) => {
     if (!inRange(e.created_at, range.start, range.end)) return false;
     if (catFilter !== "all" && e.category !== catFilter) return false;
+    if (paymentFilter && payFilter !== "all" && payOf(e) !== payFilter)
+      return false;
     if (search) {
       const q = search.toLowerCase();
       const hay = `${e.category || ""} ${e.note || ""}`.toLowerCase();
@@ -306,6 +315,27 @@ export default function LedgerPage({ config }) {
           </button>
         </div>
 
+        {/* Payment method filter chips (Cash / Online / Split) */}
+        {paymentFilter && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-4 py-2">
+            <span className="text-xs font-medium text-gray-500">Paid via:</span>
+            {PAY_CHIPS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPayFilter(p)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                  payFilter === p
+                    ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {p === "all" ? "All" : p}
+              </button>
+            ))}
+          </div>
+        )}
+
         {filtered.length === 0 ? (
           <p className="p-8 text-center text-gray-400">
             No entries match the filter.
@@ -318,6 +348,7 @@ export default function LedgerPage({ config }) {
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Category</th>
                   <th className="px-4 py-3">Note</th>
+                  {paymentFilter && <th className="px-4 py-3">Paid via</th>}
                   <th className="px-4 py-3 text-right">Amount</th>
                   <th className="px-4 py-3"></th>
                 </tr>
@@ -334,6 +365,21 @@ export default function LedgerPage({ config }) {
                         {e.category || "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-600">{e.note || "—"}</td>
+                      {paymentFilter && (
+                        <td className="px-4 py-3 text-gray-600">
+                          {payOf(e) === "Cash"
+                            ? "💵 Cash"
+                            : payOf(e) === "Online"
+                            ? "📱 Online"
+                            : payOf(e) === "Split"
+                            ? `🔀 Cash ${formatCurrency(
+                                Number(e.cash_amount) || 0
+                              )} · Online ${formatCurrency(
+                                Number(e.online_amount) || 0
+                              )}`
+                            : payOf(e)}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-right font-semibold text-gray-900">
                         {formatCurrency(e.amount)}
                       </td>

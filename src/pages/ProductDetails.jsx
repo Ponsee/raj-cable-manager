@@ -8,6 +8,7 @@ import StatCard from "../components/ui/StatCard";
 import { LineChart } from "@mui/x-charts/LineChart";
 import EditProductModal from "../components/products/EditProductModal";
 import StockLossModal from "../components/products/StockLossModal";
+import ReturnModal from "../components/products/ReturnModal";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import DateRangePicker, {
   inRange,
@@ -22,7 +23,13 @@ import {
 } from "../services/productsService";
 import { getVendors, createVendor } from "../services/vendorsService";
 import { calcStock, isLowStock, pricesByVendor } from "../utils/productCalc";
-import { STOCK_TYPES, productTypeLabel } from "../constants";
+import {
+  STOCK_TYPES,
+  productTypeLabel,
+  PAYMENT_METHODS,
+  PAYMENT_METHODS_SPLIT,
+  PAYMENT_SPLIT,
+} from "../constants";
 import { formatCurrency, formatDate } from "../utils/format";
 
 const inputClass =
@@ -33,12 +40,16 @@ const typeBadge = {
   sale: "bg-blue-100 text-blue-700",
   usage: "bg-purple-100 text-purple-700",
   loss: "bg-red-100 text-red-700",
+  opening: "bg-blue-100 text-blue-700",
+  return: "bg-amber-100 text-amber-700",
 };
 const typeLabel = {
   purchase: "Purchase",
   sale: "Sale",
   usage: "Used in service",
   loss: "Loss / damage",
+  opening: "Opening stock",
+  return: "Return",
 };
 
 // Which entries each clickable stat card shows. types=null → all movements.
@@ -60,6 +71,7 @@ export default function ProductDetails() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [lossOpen, setLossOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
   const [activeImg, setActiveImg] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -197,6 +209,9 @@ export default function ProductDetails() {
         subtitle={`${product.code ? product.code + " · " : ""}${product.category || "Product"} · sold in ${product.unit || "units"}`}
         action={
           <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setReturnOpen(true)}>
+              ↩️ Return
+            </Button>
             <Button variant="secondary" onClick={() => setLossOpen(true)}>
               ⚠️ Report Loss
             </Button>
@@ -493,10 +508,12 @@ export default function ProductDetails() {
               onChange={(e) => setTypeFilter(e.target.value)}
             >
               <option value="all">All entries</option>
+              <option value={STOCK_TYPES.OPENING}>Opening stock</option>
               <option value={STOCK_TYPES.PURCHASE}>Purchases</option>
               <option value={STOCK_TYPES.SALE}>Sales</option>
               <option value={STOCK_TYPES.USAGE}>Used in service</option>
               <option value={STOCK_TYPES.LOSS}>Loss / damage</option>
+              <option value={STOCK_TYPES.RETURN}>Returns</option>
             </select>
             <DateRangePicker
               start={dateRange.start}
@@ -595,6 +612,16 @@ export default function ProductDetails() {
         product={{ ...product, stock: summary.stock }}
         onSaved={async () => {
           setLossOpen(false);
+          await load();
+        }}
+      />
+
+      <ReturnModal
+        open={returnOpen}
+        onClose={() => setReturnOpen(false)}
+        product={{ ...product, stock: summary.stock }}
+        onSaved={async () => {
+          setReturnOpen(false);
           await load();
         }}
       />
@@ -738,6 +765,9 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
   const [vendorId, setVendorId] = useState("");
   const [newVendorName, setNewVendorName] = useState("");
   const [note, setNote] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS_SPLIT[0]); // Cash by default
+  const [cashAmount, setCashAmount] = useState(""); // for Split
+  const [onlineAmount, setOnlineAmount] = useState(""); // for Split
   const [vendors, setVendors] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -762,6 +792,9 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
     setVendorId("");
     setNewVendorName("");
     setNote("");
+    setPaymentMethod(PAYMENT_METHODS_SPLIT[0]);
+    setCashAmount("");
+    setOnlineAmount("");
     setError("");
   };
 
@@ -770,20 +803,35 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
     setError("");
 
     const usage = type === STOCK_TYPES.USAGE;
+    const opening = type === STOCK_TYPES.OPENING;
     const stockOut = type === STOCK_TYPES.SALE || usage;
     if (qty <= 0) return setError("Quantity must be greater than 0.");
-    if (!usage && rate <= 0) return setError("Rate must be greater than 0.");
+    // Purchase & sale need a price; usage and opening stock don't.
+    if (!usage && !opening && rate <= 0)
+      return setError("Rate must be greater than 0.");
     if (stockOut && qty > currentStock)
       return setError(
         `Not enough stock. Only ${currentStock} ${product.unit} available.`
       );
 
+    // Split payment (purchase only): Cash + Online must add up to the total.
+    let cashAmt = 0;
+    let onlineAmt = 0;
+    if (type === STOCK_TYPES.PURCHASE && paymentMethod === PAYMENT_SPLIT) {
+      cashAmt = Number(cashAmount) || 0;
+      onlineAmt = Number(onlineAmount) || 0;
+      if (Math.round(cashAmt + onlineAmt) !== Math.round(total))
+        return setError(
+          `Cash + Online must add up to ${formatCurrency(total)}.`
+        );
+    }
+
     setSaving(true);
     try {
-      // Resolve the vendor (purchases only): existing, brand-new, or none.
+      // Resolve the vendor (purchases & opening stock): existing, new, or none.
       let vendor_id = null;
       let vendor_name = null;
-      if (type === STOCK_TYPES.PURCHASE) {
+      if (type === STOCK_TYPES.PURCHASE || opening) {
         if (vendorId === "__new__") {
           const name = newVendorName.trim();
           if (!name) {
@@ -805,18 +853,30 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
         type,
         quantity: qty,
         price_per_unit: usage ? 0 : rate,
-        // Selling price is recorded per purchase (can differ each batch).
+        // Selling price is recorded on purchase & opening stock (can differ).
         selling_price:
-          type === STOCK_TYPES.PURCHASE ? Number(sellingPrice) || null : null,
+          type === STOCK_TYPES.PURCHASE || opening
+            ? Number(sellingPrice) || null
+            : null,
         total_amount: usage ? 0 : total,
         vendor_id,
         vendor_name,
         note: note.trim() || null,
       };
 
-      await addStockTransaction(payload, { productName: product.name });
-      // On a purchase, save/refresh the product's selling price if entered.
-      if (type === STOCK_TYPES.PURCHASE && Number(sellingPrice) > 0) {
+      await addStockTransaction(payload, {
+        productName: product.name,
+        // Sales pass Cash/Online to income; purchases pass it (+ any split) to the
+        // expense. Opening stock creates no money entry, so no payment method.
+        paymentMethod: usage || opening ? undefined : paymentMethod,
+        cashAmount: cashAmt,
+        onlineAmount: onlineAmt,
+      });
+      // On a purchase or opening entry, save/refresh the selling price if entered.
+      if (
+        (type === STOCK_TYPES.PURCHASE || opening) &&
+        Number(sellingPrice) > 0
+      ) {
         await updateProduct(product.id, {
           selling_price: Number(sellingPrice),
         });
@@ -832,15 +892,19 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
 
   const isPurchase = type === STOCK_TYPES.PURCHASE;
   const isUsage = type === STOCK_TYPES.USAGE;
+  const isOpening = type === STOCK_TYPES.OPENING;
   const stockOptions = [
     { v: STOCK_TYPES.PURCHASE, icon: "🛒", label: "Purchase" },
     { v: STOCK_TYPES.SALE, icon: "💰", label: "Sale" },
     { v: STOCK_TYPES.USAGE, icon: "🔧", label: "Used in service" },
+    { v: STOCK_TYPES.OPENING, icon: "📦", label: "Opening stock" },
   ];
   const helpText = isPurchase
     ? "Buying stock — adds to inventory and records an Expense."
     : isUsage
     ? `Used for a service job — removes from inventory. No income. Available: ${currentStock} ${product.unit}.`
+    : isOpening
+    ? "Stock you already had — adds to inventory. No expense is recorded. Buying price & vendor are optional."
     : `Selling stock — removes from inventory and records an Income. Available: ${currentStock} ${product.unit}.`;
 
   return (
@@ -853,7 +917,7 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
         )}
 
         {/* Type selector */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {stockOptions.map((o) => (
             <button
               key={o.v}
@@ -901,7 +965,11 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
         {!isUsage && (
           <Field
             label={
-              isPurchase ? "Purchase price per unit (₹)" : "Selling price per unit (₹)"
+              isOpening
+                ? "Buying price per unit (₹) — optional"
+                : isPurchase
+                ? "Purchase price per unit (₹)"
+                : "Selling price per unit (₹)"
             }
           >
             <input
@@ -911,12 +979,12 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               className={inputClass}
-              placeholder="0"
+              placeholder={isOpening ? "Leave blank if unknown" : "0"}
             />
           </Field>
         )}
 
-        {isPurchase && (
+        {(isPurchase || isOpening) && (
           <Field label="Selling price per unit (₹)">
             <input
               type="number"
@@ -933,8 +1001,8 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
           </Field>
         )}
 
-        {isPurchase && (
-          <Field label="Vendor">
+        {(isPurchase || isOpening) && (
+          <Field label={isOpening ? "Vendor (optional)" : "Vendor"}>
             <select
               value={vendorId}
               onChange={(e) => setVendorId(e.target.value)}
@@ -969,12 +1037,91 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
           />
         </Field>
 
+        {/* Paid via — purchases: Cash/Online/Split (expense); sales: Cash/Online (income) */}
+        {!isUsage && !isOpening && (
+          <Field label="Paid via">
+            <div
+              className={`grid gap-2 ${isPurchase ? "grid-cols-3" : "grid-cols-2"}`}
+            >
+              {(isPurchase ? PAYMENT_METHODS_SPLIT : PAYMENT_METHODS).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setPaymentMethod(m)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    paymentMethod === m
+                      ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            {isPurchase && paymentMethod === PAYMENT_SPLIT && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">
+                    Cash (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={total}
+                    step="any"
+                    value={cashAmount}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCashAmount(v);
+                      setOnlineAmount(
+                        String(Math.max(0, total - (Number(v) || 0)))
+                      );
+                    }}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">
+                    Online (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={total}
+                    step="any"
+                    value={onlineAmount}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setOnlineAmount(v);
+                      setCashAmount(
+                        String(Math.max(0, total - (Number(v) || 0)))
+                      );
+                    }}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </div>
+                <p className="col-span-2 text-xs text-gray-500">
+                  Should add up to {formatCurrency(total)} — entered{" "}
+                  {formatCurrency(
+                    (Number(cashAmount) || 0) + (Number(onlineAmount) || 0)
+                  )}
+                  .
+                </p>
+              </div>
+            )}
+          </Field>
+        )}
+
         <div
           className={`rounded-lg px-3 py-2 text-sm ${
             isPurchase
               ? "bg-amber-50 text-amber-800"
               : isUsage
               ? "bg-purple-50 text-purple-800"
+              : isOpening
+              ? "bg-blue-50 text-blue-800"
               : "bg-green-50 text-green-800"
           }`}
         >
@@ -982,10 +1129,20 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
             <>
               Removes <strong>{qty} {product.unit}</strong> from stock (no income)
             </>
+          ) : isOpening ? (
+            <>
+              Adds <strong>{qty} {product.unit}</strong> to stock — no expense
+            </>
           ) : (
             <>
               {isPurchase ? "Total cost" : "Total sale"}:{" "}
               <strong>{formatCurrency(total)}</strong>
+              {isPurchase && paymentMethod === PAYMENT_SPLIT && (
+                <span className="block">
+                  💵 Cash {formatCurrency(Number(cashAmount) || 0)} · 📱 Online{" "}
+                  {formatCurrency(Number(onlineAmount) || 0)}
+                </span>
+              )}
             </>
           )}
         </div>

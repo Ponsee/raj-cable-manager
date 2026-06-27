@@ -23,6 +23,7 @@ import {
   deletePurchaseBatch,
 } from "../services/productsService";
 import { formatCurrency, formatDate } from "../utils/format";
+import { PAYMENT_METHODS_SPLIT, PAYMENT_SPLIT } from "../constants";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Autocomplete, { createFilterOptions } from "@mui/material/Autocomplete";
@@ -434,6 +435,9 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
   const [purchaseDate, setPurchaseDate] = useState(todayStr());
   const [discount, setDiscount] = useState("");
   const [transport, setTransport] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS_SPLIT[0]); // Cash by default
+  const [cashAmount, setCashAmount] = useState(""); // for Split
+  const [onlineAmount, setOnlineAmount] = useState(""); // for Split
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -444,6 +448,9 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
       setPurchaseDate(todayStr());
       setDiscount("");
       setTransport("");
+      setPaymentMethod(PAYMENT_METHODS_SPLIT[0]);
+      setCashAmount("");
+      setOnlineAmount("");
       setError("");
     }
   }, [open]);
@@ -473,6 +480,18 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
     );
     if (valid.length === 0)
       return setError("Add at least one line with product, quantity and cost.");
+
+    // Split payment: Cash + Online must add up to the order total.
+    let cashAmt = 0;
+    let onlineAmt = 0;
+    if (paymentMethod === PAYMENT_SPLIT) {
+      cashAmt = Number(cashAmount) || 0;
+      onlineAmt = Number(onlineAmount) || 0;
+      if (Math.round(cashAmt + onlineAmt) !== Math.round(grandTotal))
+        return setError(
+          `Cash + Online must add up to ${formatCurrency(grandTotal)}.`
+        );
+    }
 
     setSaving(true);
     try {
@@ -504,6 +523,9 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
         lines: resolved,
         discount: Number(discount) || 0,
         transport: Number(transport) || 0,
+        paymentMethod,
+        cashAmount: cashAmt,
+        onlineAmount: onlineAmt,
         purchaseDate,
       });
       await onSaved();
@@ -723,6 +745,82 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
           </div>
         </div>
 
+        {/* Paid via — Cash / Online / Split (recorded on the combined expense) */}
+        <div>
+          <label className="mb-1 block text-xs text-gray-500">Paid via</label>
+          <div className="grid grid-cols-3 gap-2">
+            {PAYMENT_METHODS_SPLIT.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setPaymentMethod(m)}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                  paymentMethod === m
+                    ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          {paymentMethod === PAYMENT_SPLIT && (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">
+                  Cash (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max={grandTotal}
+                  step="any"
+                  value={cashAmount}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCashAmount(v);
+                    // Auto-fill the Online part as whatever's left of the total.
+                    setOnlineAmount(
+                      String(Math.max(0, grandTotal - (Number(v) || 0)))
+                    );
+                  }}
+                  className={inputClass}
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">
+                  Online (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max={grandTotal}
+                  step="any"
+                  value={onlineAmount}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setOnlineAmount(v);
+                    // Auto-fill the Cash part as whatever's left of the total.
+                    setCashAmount(
+                      String(Math.max(0, grandTotal - (Number(v) || 0)))
+                    );
+                  }}
+                  className={inputClass}
+                  placeholder="0"
+                />
+              </div>
+              <p className="col-span-2 text-xs text-gray-500">
+                Should add up to {formatCurrency(grandTotal)} — entered{" "}
+                {formatCurrency(
+                  (Number(cashAmount) || 0) + (Number(onlineAmount) || 0)
+                )}
+                .
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <div className="flex justify-between">
             <span>Subtotal</span>
@@ -744,6 +842,18 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
             <span>Total cost</span>
             <span>{formatCurrency(grandTotal)}</span>
           </div>
+          {paymentMethod === PAYMENT_SPLIT && (
+            <div className="border-t border-amber-200 pt-1">
+              <div className="flex justify-between">
+                <span>💵 Cash</span>
+                <span>{formatCurrency(Number(cashAmount) || 0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>📱 Online</span>
+                <span>{formatCurrency(Number(onlineAmount) || 0)}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
