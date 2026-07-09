@@ -133,7 +133,9 @@ export default function Products() {
       p.name?.toLowerCase().includes(search.toLowerCase()) ||
       p.subcategory?.toLowerCase().includes(search.toLowerCase());
     return matchesCategory && matchesType && matchesSearch;
-  });
+  })
+    // Best sellers first (by all-time units sold); ties keep newest-first order.
+    .sort((a, b) => (b.soldQty || 0) - (a.soldQty || 0));
 
   return (
     <div>

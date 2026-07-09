@@ -680,7 +680,7 @@ export function AddTransactionModal({
         parts.push(`Advance reduced: ${formatCurrency(Number(amount))}`);
         parts.push(
           `Remaining advance: ${formatCurrency(
-            Math.max(0, totalAdvance - Number(amount))
+            Math.max(0, outstandingAdvance - Number(amount))
           )}`
         );
       }
@@ -760,6 +760,10 @@ export function AddTransactionModal({
       // Employee salary: monthly salary - leave deduction - advance to reduce
       if (salaryBase <= 0)
         return setError("No salary found for this worker.");
+      if (advanceReduced > outstandingAdvance)
+        return setError(
+          "Advance to reduce is more than the outstanding advance."
+        );
       const amountPaid = salaryNet;
       payload.type = "salary";
       payload.amount = amountPaid;
@@ -1010,7 +1014,7 @@ export function AddTransactionModal({
               <input
                 type="number"
                 min="0"
-                max={totalAdvance}
+                max={outstandingAdvance}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 className={inputClass}
@@ -1032,10 +1036,10 @@ export function AddTransactionModal({
                 <span>Monthly salary</span>
                 <span>{formatCurrency(salaryBase)}</span>
               </div>
-              {totalAdvance > 0 && (
+              {outstandingAdvance > 0 && (
                 <div className="flex justify-between text-gray-600">
                   <span>Current advance</span>
-                  <span>{formatCurrency(totalAdvance)}</span>
+                  <span>{formatCurrency(outstandingAdvance)}</span>
                 </div>
               )}
               {Number(leaveDays) > 0 && (
@@ -1050,11 +1054,11 @@ export function AddTransactionModal({
                   <span>−{formatCurrency(Number(amount))}</span>
                 </div>
               )}
-              {totalAdvance > 0 && (
+              {outstandingAdvance > 0 && (
                 <div className="flex justify-between text-gray-600">
                   <span>Remaining advance</span>
                   <span>
-                    {formatCurrency(Math.max(0, totalAdvance - (Number(amount) || 0)))}
+                    {formatCurrency(Math.max(0, outstandingAdvance - (Number(amount) || 0)))}
                   </span>
                 </div>
               )}

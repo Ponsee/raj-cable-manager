@@ -48,6 +48,7 @@ export default function Pending() {
   const [addOpen, setAddOpen] = useState(false);
   const [collectRow, setCollectRow] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [customersOpen, setCustomersOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
@@ -81,9 +82,25 @@ export default function Pending() {
     }
   };
 
-  const open = rows.filter((r) => r.status !== "closed");
+  const open = rows.filter((r) => r.balance > 0);
+  const collected = rows.filter(
+    (r) => r.balance <= 0 && (Number(r.total_amount) || 0) > 0
+  );
   const outstanding = open.reduce((s, r) => s + r.balance, 0);
-  const shown = view === "open" ? open : rows;
+  // Open balances grouped per customer (name, case-insensitive) → how much each owes.
+  const owingList = Object.values(
+    open.reduce((acc, r) => {
+      const name = (r.customer_name || "").trim() || "Customer";
+      const key = name.toLowerCase();
+      (acc[key] ||= { name, balance: 0, items: 0 });
+      acc[key].balance += r.balance;
+      acc[key].items += 1;
+      return acc;
+    }, {})
+  ).sort((a, b) => b.balance - a.balance);
+  const owingCustomers = owingList.length;
+  const shown =
+    view === "open" ? open : view === "collected" ? collected : rows;
 
   if (loading) return <p className="text-gray-400">Loading pending payments…</p>;
 
@@ -97,7 +114,13 @@ export default function Pending() {
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Outstanding" value={formatCurrency(outstanding)} icon="⏳" accent="red" />
-        <StatCard label="Customers owing" value={open.length} icon="👤" accent="amber" />
+        <StatCard
+          label="Customers owing"
+          value={owingCustomers}
+          icon="👤"
+          accent="amber"
+          onClick={owingCustomers > 0 ? () => setCustomersOpen(true) : undefined}
+        />
         <StatCard
           label="Total credit given"
           value={formatCurrency(rows.reduce((s, r) => s + (Number(r.total_amount) || 0), 0))}
@@ -114,7 +137,11 @@ export default function Pending() {
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-3">
-          {["open", "all"].map((v) => (
+          {[
+            { v: "open", label: `Open balances (${open.length})` },
+            { v: "collected", label: `Collected (${collected.length})` },
+            { v: "all", label: `All (${rows.length})` },
+          ].map(({ v, label }) => (
             <button
               key={v}
               type="button"
@@ -125,14 +152,18 @@ export default function Pending() {
                   : "border-gray-200 text-gray-600 hover:bg-gray-50"
               }`}
             >
-              {v === "open" ? "Open balances" : "All"}
+              {label}
             </button>
           ))}
         </div>
 
         {shown.length === 0 ? (
           <p className="p-8 text-center text-gray-400">
-            {view === "open" ? "No outstanding balances. 🎉" : "No pending records yet."}
+            {view === "open"
+              ? "No outstanding balances. 🎉"
+              : view === "collected"
+              ? "Nothing collected yet."
+              : "No pending records yet."}
           </p>
         ) : (
           <div className="max-h-[34rem] overflow-auto">
@@ -142,6 +173,9 @@ export default function Pending() {
                   <th className="px-4 py-3">Customer</th>
                   <th className="px-4 py-3">Item</th>
                   <th className="px-4 py-3">Date</th>
+                  {view === "collected" && (
+                    <th className="px-4 py-3">Collected on</th>
+                  )}
                   <th className="px-4 py-3 text-right">Total</th>
                   <th className="px-4 py-3 text-right">Paid</th>
                   <th className="px-4 py-3 text-right">Balance</th>
@@ -155,7 +189,14 @@ export default function Pending() {
                       {r.customer_name || "—"}
                     </td>
                     <td className="px-4 py-3 text-gray-600">{r.description || "—"}</td>
-                    <td className="px-4 py-3 text-gray-500">{formatDate(r.created_at)}</td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {formatDate(r.created_at)}
+                    </td>
+                    {view === "collected" && (
+                      <td className="px-4 py-3 text-gray-500">
+                        {r.settled_at ? formatDate(r.settled_at) : "—"}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-right text-gray-700">
                       {formatCurrency(r.total_amount)}
                     </td>
@@ -204,6 +245,39 @@ export default function Pending() {
           await load();
         }}
       />
+
+      <Modal
+        open={customersOpen}
+        onClose={() => setCustomersOpen(false)}
+        title="Customers who owe you"
+        size="sm"
+      >
+        {owingList.length === 0 ? (
+          <p className="py-6 text-center text-gray-400">No one owes you. 🎉</p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {owingList.map((c) => (
+              <div key={c.name} className="flex items-center justify-between py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-gray-800">
+                    {c.name}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {c.items} item{c.items === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <span className="shrink-0 text-sm font-semibold text-red-600">
+                  {formatCurrency(c.balance)}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between pt-3 text-sm font-semibold text-gray-800">
+              <span>Total outstanding</span>
+              <span className="text-red-600">{formatCurrency(outstanding)}</span>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <CollectModal
         row={collectRow}
