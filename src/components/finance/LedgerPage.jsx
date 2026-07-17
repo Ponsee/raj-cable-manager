@@ -414,6 +414,7 @@ export default function LedgerPage({ config }) {
         table={table}
         title={addLabel}
         defaultCategories={categories}
+        excludeCategories={lockedCategories}
         onSaved={async () => {
           setAddOpen(false);
           await load();
@@ -616,6 +617,7 @@ function AddEntryModal({
   table,
   title,
   defaultCategories,
+  excludeCategories = [],
   onSaved,
 }) {
   const idRef = useRef(0);
@@ -642,8 +644,12 @@ function AddEntryModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Defaults + any previously-used categories, de-duplicated.
-  const catOptions = [...new Set([...defaultCategories, ...suggestions])];
+  // Defaults + any previously-used categories, de-duplicated. Auto-managed ones
+  // (Product purchase / Staff salary / worker / refund) are dropped — those rows
+  // are created from their source, so offering them here would double-count.
+  const catOptions = [...new Set([...defaultCategories, ...suggestions])].filter(
+    (c) => !excludeCategories.includes(c)
+  );
 
   const updateLine = (id, patch) =>
     setLines((ls) => ls.map((l) => (l._id === id ? { ...l, ...patch } : l)));

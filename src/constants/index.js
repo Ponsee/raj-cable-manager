@@ -197,9 +197,12 @@ export const INCOME_SOURCES = [
 // Starting list for the recharge provider dropdown (users can add more).
 export const INTERNET_PROVIDERS = ["BSNL", "TIC Fiber"];
 
+// Categories offered in the manual "General expense" form. Auto-managed ones
+// (Staff salary, Product purchase, worker categories, Customer refund) are
+// deliberately NOT here — they're created automatically from their source
+// (worker pay / purchase / return), so adding them by hand would double-count.
+// See `lockedCategories` in pages/Expense.jsx.
 export const EXPENSE_CATEGORIES = [
-  "Staff salary",
-  "Product purchase",
   "Electricity",
   "Fuel",
   "Water",

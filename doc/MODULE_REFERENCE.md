@@ -1,6 +1,6 @@
 # Raj Cable Manager — Module Reference (Workers · Products · Vendors · Income · Expense · Pending)
 
-Last updated: 2026-06-27. This documents the features built so far in the
+Last updated: 2026-07-17. This documents the features built so far in the
 **Workers**, **Products**, **Vendors**, **Income**, **Expense**, and
 **Pending Payments** modules, plus the setup steps (migrations / Supabase
 config) needed for them to work.
@@ -14,6 +14,12 @@ config) needed for them to work.
 > Dashboard **Cash vs Online** charts + **Best selling products**. New income
 > source **🏠 Home Collection**, and a **partial-payment** option on New Cable /
 > New Internet / Internet Recharge.
+
+> **What's new (2026-07-17):** Pending page **search**, **group by customer**
+> (default on) with a **multi-item Collect**, a clickable **Customers owing**
+> breakdown, and both sale + **collected** dates. Products grid **sorted by best
+> sellers**. Salary popup now shows the **outstanding** advance (bug fix). The
+> manual "General expense" form no longer offers **auto-managed categories**.
 
 > **UI note:** the app now uses **MUI (Material UI)**. Shared UI primitives
 > (`Button`, `Modal`, `StatCard`, `PageHeader`, `DateRangePicker`) and the
@@ -150,6 +156,12 @@ Both money tables carry **how the money moved**:
 
 ### Salary entry
 - Net = `monthly_salary − (leaveDays × monthly/30) − advanceToReduce`, with a live breakdown.
+- The breakdown's **Current / Remaining advance** uses the **outstanding** advance
+  (given − already reduced) — the same figure as the Total Advance / Balance Due
+  card — **not** the gross ever given. "Advance to reduce" is capped at it, and
+  saving is blocked if it exceeds it (same guard as contract work).
+  *(Fixed 2026-07-17: salary previously showed the gross total, so a worker with
+  partly-settled advances showed a higher "Current advance" than their balance.)*
 
 ### Contractor work entry (splicing only, per joint)
 - Enter joints → gross (per-joint pricing); optional **Advance to reduce** → net to pay.
@@ -288,9 +300,11 @@ badge per type with a per-type filter.
   refund posts as an expense so **net profit drops by the refund** (offsetting
   the original sale). No refund → just stock back, no money entry.
 
-### Best-seller tag
+### Best sellers (tag + sort)
 - The products list flags the **top 5 by all-time units sold** with a **🔥 Best
   seller** badge (computed from each product's `soldQty`).
+- The grid is **sorted by units sold (desc)** — best sellers first; ties keep the
+  newest-first order. Sorting runs after the search / type / category filters.
 
 ### Report Loss / Damage (`components/products/StockLossModal.jsx`)
 - A shared "Report Loss / Damage" action on **Product Details** (product fixed)
@@ -444,9 +458,18 @@ badge per type with a per-type filter.
   A **"Paid via"** column shows 💵 Cash / 📱 Online / 🔀 split breakdown per row.
   `financeService.getEntries` now also fetches `payment_method` + `cash_amount` /
   `online_amount` for expenses (graceful fallback).
-- **Category** in Add Expense is a **MUI Autocomplete** combobox (pick or type new);
-  defaults include Staff salary, Product purchase, Electricity, Fuel, **Water,
-  Parcel, For Home**, Office expenses, Other.
+- **Category** in Add Expense is a **MUI Autocomplete** combobox (pick or type new).
+  `EXPENSE_CATEGORIES` = Electricity, Fuel, Water, Parcel, For Home, Office
+  expenses, Other.
+- **Auto-managed categories are NOT offered** in the manual *General expense*
+  form: `AddEntryModal` takes `excludeCategories` (= the page's
+  `lockedCategories`) and filters them out of both the defaults **and** the
+  used-before suggestions — so you can't hand-add *Product purchase*, *Staff
+  salary*, *Worker advance*, *Contract work*, *Customer refund*, etc. and
+  double-count what the system already records from the source.
+  Those rows are still **created automatically**, and still appear in the ledger,
+  the **category filter** (built from data, not the constant), the breakdown, and
+  the charts. The field is free-solo, so typing one by hand is still possible.
 
 ### Unified "Add Expense" (config `unifiedAdd: true`)
 - The **+ Add Expense** button opens a **chooser** (with breadcrumb + Back):
@@ -490,10 +513,31 @@ Table `pending_payments` (`customer_name`, `product_id`, `description`,
   the **partial-payment** toggle on New Cable / New Internet / Internet Recharge.
 - **Collect (`collectPayment`):** books the collected amount as income (under the
   stored `category`), bumps `paid_amount`, closes the record when fully paid.
-- **Page:** cards (Outstanding · Customers owing · Total credit given ·
-  Collected), **Open / All** chips, a table per balance with **Collect** +
-  **Delete**. Nav: **⏳ Pending** (Finance group). Delete removes the credit note
-  only — it does **not** reverse booked income or restock (warned in the dialog).
+
+### Page (`/pending`)
+- **Cards:** Outstanding · **Customers owing** · Total credit given · Collected.
+  Nav: **⏳ Pending** (Finance group).
+  - **Customers owing** counts **unique customer names** (case-insensitive) among
+    open balances — not row count — and is **clickable** → a modal listing each
+    customer with their item count + total owed (highest first) + a grand total.
+- **Search** — filters by customer name or item.
+- **Views:** **Open balances / Collected / All** chips (each with a count).
+  The **Collected** view adds a **"Collected on"** column (`settled_at`) next to
+  the sale **Date**, so you see both.
+- **👥 Group by customer** (toggle, **on by default**): rows collapse into a
+  group per customer — header shows the name, item count, **total amount**, and
+  **total balance owed**, with the items nested under it. Groups sort by most
+  owed first.
+- **Collect (per item)** — enter any amount (partial allowed).
+- **Collect (per group)** — the group header's Collect opens `GroupCollectModal`:
+  a **checklist of that customer's open items** (all ticked by default, with
+  Select all / Clear all), Cash/Online + date, and a running "Collecting N items
+  — ₹X" total. Each ticked item is settled **in full** (a `collectPayment` per
+  item, so each books income under its own category).
+- **Delete** removes the credit note only — it does **not** reverse booked income
+  or restock (warned in the dialog).
+- The page loads pending + products **independently**, so a missing
+  `pending_payments` table (migration not run) doesn't blank the product picker.
 
 ---
 
