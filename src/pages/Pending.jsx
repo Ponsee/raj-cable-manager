@@ -44,9 +44,12 @@ export default function Pending() {
   const [rows, setRows] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState("open"); // open | all
+  const [view, setView] = useState("open"); // open | collected | all
+  const [search, setSearch] = useState("");
+  const [grouped, setGrouped] = useState(true); // group rows by customer (default on)
   const [addOpen, setAddOpen] = useState(false);
   const [collectRow, setCollectRow] = useState(null);
+  const [groupCollect, setGroupCollect] = useState(null); // collect several at once
   const [confirmId, setConfirmId] = useState(null);
   const [customersOpen, setCustomersOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -99,8 +102,29 @@ export default function Pending() {
     }, {})
   ).sort((a, b) => b.balance - a.balance);
   const owingCustomers = owingList.length;
-  const shown =
+
+  const inView =
     view === "open" ? open : view === "collected" ? collected : rows;
+  // Search across customer name + item.
+  const q = search.trim().toLowerCase();
+  const shown = q
+    ? inView.filter((r) =>
+        `${r.customer_name || ""} ${r.description || ""}`.toLowerCase().includes(q)
+      )
+    : inView;
+
+  // Grouped by customer → each group carries its rows + totals.
+  const groups = Object.values(
+    shown.reduce((acc, r) => {
+      const name = (r.customer_name || "").trim() || "Customer";
+      const key = name.toLowerCase();
+      (acc[key] ||= { key, name, rows: [], balance: 0, total: 0 });
+      acc[key].rows.push(r);
+      acc[key].balance += r.balance;
+      acc[key].total += Number(r.total_amount) || 0;
+      return acc;
+    }, {})
+  ).sort((a, b) => b.balance - a.balance || b.total - a.total);
 
   if (loading) return <p className="text-gray-400">Loading pending payments…</p>;
 
@@ -136,7 +160,28 @@ export default function Pending() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-3">
+        {/* Search + group toggle */}
+        <div className="flex flex-col gap-2 border-b border-gray-100 px-4 py-3 sm:flex-row sm:items-center">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search customer or item..."
+            className={inputClass + " sm:max-w-xs"}
+          />
+          <button
+            type="button"
+            onClick={() => setGrouped((g) => !g)}
+            className={`shrink-0 rounded-lg border px-3 py-1.5 text-sm font-medium transition sm:ml-auto ${
+              grouped
+                ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                : "border-gray-200 text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            👥 Group by customer
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-4 py-3">
           {[
             { v: "open", label: `Open balances (${open.length})` },
             { v: "collected", label: `Collected (${collected.length})` },
@@ -159,12 +204,96 @@ export default function Pending() {
 
         {shown.length === 0 ? (
           <p className="p-8 text-center text-gray-400">
-            {view === "open"
+            {q
+              ? "No records match your search."
+              : view === "open"
               ? "No outstanding balances. 🎉"
               : view === "collected"
               ? "Nothing collected yet."
               : "No pending records yet."}
           </p>
+        ) : grouped ? (
+          <div className="max-h-[34rem] divide-y divide-gray-100 overflow-auto">
+            {groups.map((g) => (
+              <div key={g.key}>
+                {/* Group header — customer + totals + collect-many */}
+                <div className="flex items-center justify-between gap-3 bg-gray-50 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-gray-900">{g.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {g.rows.length} item{g.rows.length === 1 ? "" : "s"} · total{" "}
+                      {formatCurrency(g.total)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span
+                      className={`text-sm font-semibold ${
+                        g.balance > 0 ? "text-red-600" : "text-green-600"
+                      }`}
+                    >
+                      {g.balance > 0 ? formatCurrency(g.balance) : "Paid"}
+                    </span>
+                    {g.balance > 0 && (
+                      <button
+                        onClick={() => setGroupCollect(g)}
+                        className="rounded-lg border border-indigo-600 px-2.5 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-50"
+                      >
+                        Collect
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Group items */}
+                {g.rows.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between gap-3 px-4 py-2 pl-8 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-gray-700">{r.description || "—"}</p>
+                      <p className="text-xs text-gray-400">
+                        {formatDate(r.created_at)}
+                        {r.balance <= 0 && r.settled_at
+                          ? ` · collected ${formatDate(r.settled_at)}`
+                          : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-gray-500">
+                        {formatCurrency(r.paid_amount)} / {formatCurrency(r.total_amount)}
+                      </span>
+                      {r.balance > 0 ? (
+                        <span className="w-20 text-right font-semibold text-red-600">
+                          {formatCurrency(r.balance)}
+                        </span>
+                      ) : (
+                        <span className="w-20 text-right">
+                          <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
+                            Paid
+                          </span>
+                        </span>
+                      )}
+                      {r.balance > 0 && (
+                        <button
+                          onClick={() => setCollectRow(r)}
+                          className="text-xs font-medium text-indigo-600 hover:underline"
+                        >
+                          Collect
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setConfirmId(r.id)}
+                        className="text-xs font-medium text-red-600 hover:underline"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="max-h-[34rem] overflow-auto">
             <table className="w-full text-left text-sm">
@@ -279,6 +408,15 @@ export default function Pending() {
         )}
       </Modal>
 
+      <GroupCollectModal
+        group={groupCollect}
+        onClose={() => setGroupCollect(null)}
+        onSaved={async () => {
+          setGroupCollect(null);
+          await load();
+        }}
+      />
+
       <CollectModal
         row={collectRow}
         onClose={() => setCollectRow(null)}
@@ -377,6 +515,143 @@ function CollectModal({ row, onClose, onSaved }) {
             onChange={(e) => setDate(e.target.value)}
             className={inputClass}
           />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={saving}>
+            {saving ? "Saving..." : "Collect"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Collect several of one customer's pending items at once. Tick the items to
+// settle — each selected item is collected in full.
+function GroupCollectModal({ group, onClose, onSaved }) {
+  const [selected, setSelected] = useState({});
+  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
+  const [date, setDate] = useState(todayStr());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (group) {
+      // Default: everything still owed is ticked.
+      const init = {};
+      for (const r of group.rows) if (r.balance > 0) init[r.id] = true;
+      setSelected(init);
+      setPaymentMethod(PAYMENT_METHODS[0]);
+      setDate(todayStr());
+      setError("");
+    }
+  }, [group]);
+
+  if (!group) return null;
+
+  const openRows = group.rows.filter((r) => r.balance > 0);
+  const chosen = openRows.filter((r) => selected[r.id]);
+  const total = chosen.reduce((s, r) => s + r.balance, 0);
+  const allTicked = chosen.length === openRows.length && openRows.length > 0;
+
+  const toggleAll = () => {
+    const next = {};
+    if (!allTicked) for (const r of openRows) next[r.id] = true;
+    setSelected(next);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (chosen.length === 0) return setError("Select at least one item.");
+
+    setSaving(true);
+    try {
+      // Each selected item is settled for its full balance.
+      for (const r of chosen)
+        await collectPayment({ row: r, amount: r.balance, paymentMethod, date });
+      await onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={!!group}
+      onClose={onClose}
+      title={`Collect from ${group.name}`}
+      size="md"
+    >
+      <form onSubmit={handleSave} className="space-y-3">
+        {error && (
+          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-600">
+            Pick what they're paying for ({openRows.length} open)
+          </p>
+          <button
+            type="button"
+            onClick={toggleAll}
+            className="text-xs font-medium text-indigo-600 hover:underline"
+          >
+            {allTicked ? "Clear all" : "Select all"}
+          </button>
+        </div>
+
+        <div className="max-h-64 divide-y divide-gray-100 overflow-auto rounded-lg border border-gray-200">
+          {openRows.map((r) => (
+            <label
+              key={r.id}
+              className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-gray-50"
+            >
+              <input
+                type="checkbox"
+                checked={!!selected[r.id]}
+                onChange={(e) =>
+                  setSelected((s) => ({ ...s, [r.id]: e.target.checked }))
+                }
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-gray-800">{r.description || "Sale"}</p>
+                <p className="text-xs text-gray-400">{formatDate(r.created_at)}</p>
+              </div>
+              <span className="shrink-0 text-sm font-semibold text-red-600">
+                {formatCurrency(r.balance)}
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Paid via</label>
+          <PayToggle value={paymentMethod} onChange={setPaymentMethod} />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Date</label>
+          <input
+            type="date"
+            value={date}
+            max={todayStr()}
+            onChange={(e) => setDate(e.target.value)}
+            className={inputClass + " sm:max-w-xs"}
+          />
+        </div>
+
+        <div className="flex justify-between rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+          <span>
+            Collecting {chosen.length} item{chosen.length === 1 ? "" : "s"}
+          </span>
+          <span>{formatCurrency(total)}</span>
         </div>
 
         <div className="flex justify-end gap-2 pt-1">
