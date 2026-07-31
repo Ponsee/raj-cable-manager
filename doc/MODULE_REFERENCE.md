@@ -20,6 +20,9 @@ config) needed for them to work.
 > breakdown, and both sale + **collected** dates. Products grid **sorted by best
 > sellers**. Salary popup now shows the **outstanding** advance (bug fix). The
 > manual "General expense" form no longer offers **auto-managed categories**.
+> Add Pending form gained a **Pending Income source** picker (Product sales / New
+> Cable / New Internet / Internet Recharge / Other), with the product picker
+> shown only for Product sales.
 
 > **UI note:** the app now uses **MUI (Material UI)**. Shared UI primitives
 > (`Button`, `Modal`, `StatCard`, `PageHeader`, `DateRangePicker`) and the
@@ -506,11 +509,16 @@ Table `pending_payments` (`customer_name`, `product_id`, `description`,
   never the full amount up front. The unpaid **balance** lives here until
   collected, so profit isn't inflated by money you don't have.
 - **Add (`addPending`):** records the **Paid now** part as income (under
-  `category`, default "Product sales"), drops stock for any products handed over
-  (`productId`/`quantity` or multi-product `stockLines`, a Sale movement with
-  **no** income), and stores the balance. Created from the **Pending** page or
-  the **Income** page (shared `components/finance/AddPendingModal.jsx`), and from
-  the **partial-payment** toggle on New Cable / New Internet / Internet Recharge.
+  `category`), drops stock for any products handed over (`productId`/`quantity`
+  or multi-product `stockLines`, a Sale movement with **no** income), and stores
+  the balance. Created from the **Pending** page or the **Income** page (shared
+  `components/finance/AddPendingModal.jsx`), and from the **partial-payment**
+  toggle on New Cable / New Internet / Internet Recharge.
+- **Pending Income source** picker (in `AddPendingModal`): the paid amount books
+  under the chosen source — **Product sales · New Cable · New Internet · Internet
+  Recharge · Other**. **Only "Product sales"** shows the **product picker** (and
+  drops stock); the others are plain credit sales (customer + description +
+  amounts). The source is stored so **Collect** later books under the same one.
 - **Collect (`collectPayment`):** books the collected amount as income (under the
   stored `category`), bumps `paid_amount`, closes the record when fully paid.
 

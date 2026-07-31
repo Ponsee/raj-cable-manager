@@ -51,8 +51,9 @@ export default function Sidebar({ open, onClose }) {
             className="h-10 w-10 shrink-0 rounded-xl bg-white object-contain p-0.5 shadow-lg shadow-indigo-500/30"
           />
           <div className="leading-tight">
-            <h1 className="text-sm font-bold">Raj Cable TV</h1>
-            <p className="text-xs text-slate-400">& Broadband</p>
+            <h1 className="whitespace-nowrap text-sm font-bold">
+              Raj Cable TV &amp; Broadband
+            </h1>
           </div>
         </div>
 
