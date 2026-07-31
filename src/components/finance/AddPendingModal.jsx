@@ -9,6 +9,17 @@ import { addPending } from "../../services/pendingService";
 import { formatCurrency } from "../../utils/format";
 import { PAYMENT_METHODS } from "../../constants";
 
+// The paid amount books as income under this source. Only "Product sales" uses
+// the product picker (drops stock); the others are plain credit sales.
+const PRODUCT_SALE = "Product sales";
+const CATEGORY_OPTIONS = [
+  PRODUCT_SALE,
+  "New Cable",
+  "New Internet",
+  "Internet Recharge",
+  "Other",
+];
+
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
 const todayStr = () => new Date().toISOString().split("T")[0];
@@ -36,6 +47,7 @@ function PayToggle({ value, onChange }) {
 
 export default function AddPendingModal({ open, products, onClose, onSaved }) {
   const [customer, setCustomer] = useState("");
+  const [category, setCategory] = useState(CATEGORY_OPTIONS[0]);
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [description, setDescription] = useState("");
@@ -49,6 +61,7 @@ export default function AddPendingModal({ open, products, onClose, onSaved }) {
   useEffect(() => {
     if (open) {
       setCustomer("");
+      setCategory(CATEGORY_OPTIONS[0]);
       setProductId("");
       setQuantity("1");
       setDescription("");
@@ -60,6 +73,7 @@ export default function AddPendingModal({ open, products, onClose, onSaved }) {
     }
   }, [open]);
 
+  const isProductSale = category === PRODUCT_SALE;
   const chosen = (products || []).find((p) => p.id === productId);
   const totalAmt = Number(total) || 0;
   const balance = Math.max(0, totalAmt - (Number(paidNow) || 0));
@@ -70,18 +84,20 @@ export default function AddPendingModal({ open, products, onClose, onSaved }) {
     if (totalAmt <= 0) return setError("Enter the total amount.");
     if ((Number(paidNow) || 0) > totalAmt)
       return setError("Paid now can't be more than the total.");
-    if (productId && Number(quantity) > 0 && chosen && Number(quantity) > chosen.stock)
+    const useProduct = isProductSale && productId;
+    if (useProduct && Number(quantity) > 0 && chosen && Number(quantity) > chosen.stock)
       return setError(`Only ${chosen.stock} ${chosen.unit || ""} in stock.`);
-    if (!description.trim() && !productId)
+    if (!description.trim() && !useProduct)
       return setError("Enter what the payment is for (or pick a product).");
 
     setSaving(true);
     try {
       await addPending({
         customerName: customer,
-        productId: productId || null,
-        productName: chosen?.name,
-        quantity: productId ? Number(quantity) || 0 : 0,
+        category,
+        productId: useProduct ? productId : null,
+        productName: useProduct ? chosen?.name : undefined,
+        quantity: useProduct ? Number(quantity) || 0 : 0,
         description,
         total: totalAmt,
         paidNow: Number(paidNow) || 0,
@@ -115,12 +131,41 @@ export default function AddPendingModal({ open, products, onClose, onSaved }) {
 
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">
-            Product (optional — reduces stock)
+            Pending Income source
           </label>
-          <ProductPicker products={products || []} value={productId} onChange={setProductId} />
+          <select
+            value={category}
+            onChange={(e) => {
+              setCategory(e.target.value);
+              // Product picker only applies to Product sales.
+              if (e.target.value !== PRODUCT_SALE) {
+                setProductId("");
+                setQuantity("1");
+              }
+            }}
+            className={inputClass}
+          >
+            {CATEGORY_OPTIONS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-400">
+            The paid amount (now &amp; later) is recorded as income under this source.
+          </p>
         </div>
 
-        {productId && (
+        {isProductSale && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Product (optional — reduces stock)
+            </label>
+            <ProductPicker products={products || []} value={productId} onChange={setProductId} />
+          </div>
+        )}
+
+        {isProductSale && productId && (
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Quantity</label>
             <input
