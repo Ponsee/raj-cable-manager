@@ -1,12 +1,14 @@
 // Small reusable helpers for displaying data consistently.
 
-// Format a number as Indian Rupees, e.g. 15000 -> "₹15,000"
+// Format a number as Indian Rupees. Whole amounts stay clean (15000 -> "₹15,000")
+// and decimals are shown when present (6.5 -> "₹6.5", 6.55 -> "₹6.55").
 export function formatCurrency(amount) {
   const value = Number(amount) || 0;
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(value);
 }
 
