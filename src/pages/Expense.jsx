@@ -14,6 +14,10 @@ export default function Expense() {
         categories: EXPENSE_CATEGORIES,
         unifiedAdd: true, // also add worker pay / product purchase from here
         paymentFilter: true, // show Cash / Online / Split filter chips
+        idRecharge: true, // "ID Recharge" quick-add (TCCL / TIC provider IDs)
+        // Has its own add form (IdRechargeModal), so keep it out of the manual
+        // dropdown — but it's a normal, freely-deletable expense (not locked).
+        hiddenCategories: ["ID Recharge"],
         // Auto-created rows — delete them from their source (purchase / worker),
         // not here, so stock & worker records stay in sync.
         lockedCategories: [

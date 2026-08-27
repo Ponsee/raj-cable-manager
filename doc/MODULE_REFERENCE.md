@@ -359,13 +359,22 @@ badge per type with a per-type filter.
 - `vendors` table: `name`, `phone`, `address`, `note`. Nav item **🏪 Vendors**.
 - **List** (`/vendors`): search, add, shows orders count + total spent per vendor.
 - **Details** (`/vendors/:id`): profile + stats (Total Orders, Total Spent),
-  **Edit**, **Delete** (unlinks past purchases, keeps history).
+  **Edit**, **Delete** (unlinks past purchases, keeps history). The purchase
+  history **defaults to the last 6 months** (`lastMonthsRange(6)`).
+  - **🔁 Frequently bought (last 6 months)** panel: per-product **times bought**,
+    **total qty**, and the **latest buying price** — a fixed 6-month window
+    (ignores the date filter), sorted by how often each item is bought, top 8.
+    Product names link to `/products/:id`.
 - **Pick a vendor when buying** (in the product Add-Stock purchase flow): dropdown
   of vendors + "➕ Add new vendor". Stored as `vendor_id` (+ `vendor_name` snapshot).
 - **Bulk Purchase** (from a vendor): add many products at once —
-  product (with "➕ Add new product" inline), qty, cost, sell price per line;
-  order-level **Discount** and **Transport cost**; records one purchase row per
-  line + one combined **Expense** (`subtotal − discount + transport`).
+  product (with "➕ Add new product" inline), **qty, cost ₹, total ₹, sell ₹** per
+  line; order-level **Discount** and **Transport cost**; records one purchase row
+  per line + one combined **Expense** (`subtotal − discount + transport`).
+  - **Qty / Cost / Total are linked** (`setLineMoney`): total = qty × cost. Enter
+    qty 10 + total 300 → cost fills to 30; enter cost → total fills; changing qty
+    re-derives whichever follows. `price_per_unit` stays the source of truth for
+    the saved purchase (total is a data-entry helper; values rounded to 2 dp).
   - **Paid via** Cash / Online / **Split** on the order — stored on the combined
     expense (Split shows a 💵 Cash / 📱 Online breakdown in the total box).
   - `discount`/`transport` are stored on the **first row** of the batch (others 0)
@@ -466,7 +475,8 @@ badge per type with a per-type filter.
   expenses, Other.
 - **Auto-managed categories are NOT offered** in the manual *General expense*
   form: `AddEntryModal` takes `excludeCategories` (= the page's
-  `lockedCategories`) and filters them out of both the defaults **and** the
+  `lockedCategories` + `hiddenCategories`, e.g. *ID Recharge*) and filters them
+  out of both the defaults **and** the
   used-before suggestions — so you can't hand-add *Product purchase*, *Staff
   salary*, *Worker advance*, *Contract work*, *Customer refund*, etc. and
   double-count what the system already records from the source.
@@ -481,6 +491,38 @@ badge per type with a per-type filter.
     `AddTransactionModal` (all types) → records the worker entry **and** its expense.
   - **Product purchase** → pick a vendor → the **real** `BulkPurchaseModal` →
     records the stock purchase **and** its expense.
+  - **ID Recharge** (config `idRecharge: true`) → `IdRechargeModal`: pick/type a
+    provider **ID** (`RECHARGE_IDS` = TCCL 041 / TCCL 176 / TIC, free-solo & add-new,
+    past IDs remembered via `getRechargeIds()`), **amount**, a **For month** picker
+    (`<input type=month>`, defaults to this month — *which month's amount it comes
+    out of*), a **note** that **pre-fills** to `"<ID> · for <Mon YYYY>"` and stays
+    in sync until edited, **Paid via** (💵 Cash / 📱 Online), and a **Paid on** date
+    (*the real payment date — what the ledger list shows/sorts by*). A **← Back**
+    returns to the chooser. Books a normal expense under category **`ID Recharge`**
+    (`ID_RECHARGE_CATEGORY`); the ID + month live in the note (no migration — the
+    ID is read back by splitting on `" · "`, the month by the `"· for <Mon YYYY>"`
+    pattern). Kept out of the manual dropdown via config
+    `hiddenCategories: ["ID Recharge"]` (excluded from add, but **not** locked —
+    freely deletable, unlike the 🔒 auto rows).
+  - **Two dates, on purpose:** the entry's `created_at` = the **Paid on** date
+    (what the ledger **list shows & sorts by**), but the **amount is attributed to
+    the For month** for *all* totals. `LedgerPage.attribDate(e)` returns the 1st of
+    the For-month (parsed from the note) for ID-Recharge rows, else `created_at`,
+    and it feeds the **date-range filter, Total Expense, the month-over-month
+    card, and the category breakdown** — so a recharge paid in Aug *for Jul* shows
+    in the list at its Aug date but counts under **Jul** everywhere (e.g.
+    recharging this month out of last month's amount). The ID Recharge tile uses
+    the same For-month attribution. Existing rows are fixed automatically (the
+    For-month is read from the note — no re-entry needed for the month; only the
+    payment method of pre-existing rows stays as saved).
+  - **ID Recharge tile** (Expense page, when `idRecharge`): a panel showing
+    **this month vs last month** ID-Recharge spend **plus a per-ID breakdown**,
+    bucketed by the **month each recharge is FOR** (a payment made in Aug but
+    *for Jul* counts under Jul), not by the paid-on date. Ignores the date-range
+    filter — it's a fixed this/last-month view.
+  - `financeService.addEntry` now persists **`payment_method`** (+ Split
+    `cash_amount` / `online_amount`) for **expenses too** (was income-only), with
+    a progressive fallback if those columns are missing.
 - These reuse the exported `AddTransactionModal` / `typeInfoFor` (WorkerDetails)
   and `BulkPurchaseModal` (VendorDetails) — **no duplicated logic**; both source
   and expense stay in sync.
@@ -579,6 +621,11 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
   bar), **Income/Expense — Cash vs Online by category** (stacked bars, Split-aware,
   top 7 + "Other"), and a **Last 6 months** income/expense bar. Pies group small
   slices into "Other".
+- **Products sold** & **Income by source** (follow the date range): two
+  horizontal-bar cards — **Products sold** (units sold per product, top 8, via
+  `getSales()`) and **Income by source** (amount per source, with a **how-many
+  (entry count) + amount** list underneath and a Total). Both use the selected
+  range (like Best selling products).
 - **🏆 Best selling products** — top 5 by **units sold** in the range (units +
   revenue), via `getSales()`. Shown beside **Recent activity** (latest 8 entries).
 - **Export Excel** — `xlsx` workbook: a **Summary** sheet + **one sheet per month**
@@ -603,7 +650,7 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 | `components/ui/StatCard.jsx` | MUI Paper card; accents green/red/blue/amber/indigo/purple/orange |
 | `components/ui/PageHeader.jsx` | MUI Typography title row |
 | `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
-| `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / This year / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()` |
+| `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / **Last 6 months** / This year / **Last year** / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()`, `lastMonthsRange(n)` |
 | `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals), **payment filter chips + "Paid via" column** (config `paymentFilter`) |
 | `components/finance/IncomeExpenseChart.jsx` | Shared income-vs-expense bar chart (Dashboard) |
 | `components/products/ProductPicker.jsx` | Searchable product Autocomplete **with image** (+ `renderProductOption`) |
