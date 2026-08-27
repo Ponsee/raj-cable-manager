@@ -197,6 +197,14 @@ export const INCOME_SOURCES = [
 // Starting list for the recharge provider dropdown (users can add more).
 export const INTERNET_PROVIDERS = ["BSNL", "TIC Fiber"];
 
+// ---- ID Recharge (expense) ----
+// Money paid to the MSO / provider to recharge a subscriber ID. The expense is
+// booked under this category; the chosen ID and the month it's FOR are kept in
+// the note (e.g. "TCCL 041 · for Jul 2026"). Starting IDs — users can type new
+// ones from the form, and previously-used IDs are remembered.
+export const ID_RECHARGE_CATEGORY = "ID Recharge";
+export const RECHARGE_IDS = ["TCCL 041", "TCCL 176", "TIC"];
+
 // Categories offered in the manual "General expense" form. Auto-managed ones
 // (Staff salary, Product purchase, worker categories, Customer refund) are
 // deliberately NOT here — they're created automatically from their source

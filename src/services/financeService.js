@@ -49,17 +49,41 @@ export async function getEntries(table) {
   return data || [];
 }
 
-export async function addEntry(table, { amount, category, note, date, paymentMethod }) {
+export async function addEntry(
+  table,
+  { amount, category, note, date, paymentMethod, cashAmount, onlineAmount }
+) {
   const createdAt = entryTimestamp(date);
   const row = {
     amount: Number(amount) || 0,
     category: category || null,
     note: note?.trim() || null,
-    ...(table === "income" && paymentMethod ? { payment_method: paymentMethod } : {}),
     ...(createdAt ? { created_at: createdAt } : {}),
   };
-  const { error } = await supabase.from(table).insert([row]);
-  if (error) throw error;
+  // Optional payment columns (works for income AND expenses). Split also stores
+  // the cash / online breakdown.
+  const pay = {};
+  if (paymentMethod) pay.payment_method = paymentMethod;
+  if (paymentMethod === "Split") {
+    pay.cash_amount = Number(cashAmount) || 0;
+    pay.online_amount = Number(onlineAmount) || 0;
+  }
+  // Try with the payment columns; fall back progressively if a column/migration
+  // is missing, so the insert still succeeds on an older schema.
+  const attempts = [
+    { ...row, ...pay },
+    ...(pay.payment_method ? [{ ...row, payment_method: pay.payment_method }] : []),
+    row,
+  ];
+  let lastErr;
+  for (const attempt of attempts) {
+    const { error } = await supabase.from(table).insert([attempt]);
+    if (!error) return;
+    lastErr = error;
+    if (!/column|cash_amount|online_amount|payment_method|schema cache/i.test(error.message))
+      break;
+  }
+  throw lastErr;
 }
 
 export async function updateEntry(
@@ -101,6 +125,23 @@ export async function deleteIncomeEntry(entry) {
 // Delete a whole day's batch (each entry + its stock movement).
 export async function deleteIncomeBatch(entries) {
   for (const e of entries) await deleteIncomeEntry(e);
+}
+
+// Distinct recharge IDs already used, parsed from the notes of "ID Recharge"
+// expenses (note format: "<ID> · for <Month>"). Fed into the ID picker so past
+// IDs are remembered across sessions and devices — no dedicated column needed.
+export async function getRechargeIds() {
+  const { data, error } = await supabase
+    .from("expenses")
+    .select("note")
+    .eq("category", "ID Recharge");
+  if (error) return [];
+  const ids = new Set();
+  for (const r of data || []) {
+    const first = String(r.note || "").split(" · ")[0].trim();
+    if (first) ids.add(first);
+  }
+  return [...ids];
 }
 
 // Distinct categories already used (to suggest alongside the defaults).

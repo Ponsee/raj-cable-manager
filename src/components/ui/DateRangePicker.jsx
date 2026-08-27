@@ -48,8 +48,19 @@ const SHORTCUTS = [
     },
   },
   {
+    label: "Last 6 months",
+    get: () => ({ start: toStr(dayjs().subtract(6, "month")), end: toStr(dayjs()) }),
+  },
+  {
     label: "This year",
     get: () => ({ start: toStr(dayjs().startOf("year")), end: toStr(dayjs()) }),
+  },
+  {
+    label: "Last year",
+    get: () => {
+      const ly = dayjs().subtract(1, "year");
+      return { start: toStr(ly.startOf("year")), end: toStr(ly.endOf("year")) };
+    },
   },
 ];
 
@@ -201,6 +212,14 @@ export default function DateRangePicker({ start, end, onChange }) {
 export function currentMonthRange() {
   return {
     start: dayjs().startOf("month").format(FMT),
+    end: dayjs().format(FMT),
+  };
+}
+
+// Rolling window of the last N months up to today (e.g. vendor details default).
+export function lastMonthsRange(n) {
+  return {
+    start: dayjs().subtract(n, "month").format(FMT),
     end: dayjs().format(FMT),
   };
 }

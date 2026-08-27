@@ -184,6 +184,37 @@ export default function Dashboard() {
   for (const e of expenses)
     if (mAgg[ym(e.created_at)]) mAgg[ym(e.created_at)].expense += Number(e.amount) || 0;
 
+  // ---- Selected-range views (follow the header date picker) ----
+  // Products sold in the range (by units), top 8.
+  const pmSalesMap = {};
+  for (const s of sales) {
+    if (!inRange(s.created_at, range.start, range.end)) continue;
+    const m = (pmSalesMap[s.product_id] ||= {
+      product_id: s.product_id,
+      name: s.name,
+      qty: 0,
+      revenue: 0,
+    });
+    m.qty += s.quantity;
+    m.revenue += s.amount;
+  }
+  const pmTopProducts = Object.values(pmSalesMap)
+    .sort((a, b) => b.qty - a.qty)
+    .slice(0, 8);
+
+  // Income in the range grouped by source: amount + how many entries.
+  const pmIncBySource = (() => {
+    const map = {};
+    for (const r of inInc) {
+      const k = r.category || "Other";
+      if (!map[k]) map[k] = { key: k, amount: 0, count: 0 };
+      map[k].amount += Number(r.amount) || 0;
+      map[k].count += 1;
+    }
+    return Object.values(map).sort((a, b) => b.amount - a.amount);
+  })();
+  const pmIncTotal = pmIncBySource.reduce((s, r) => s + r.amount, 0);
+
   // Pie data: top categories + an "Other" slice for the rest.
   const pieData = (rows, max = 6) => {
     const data = rows.slice(0, max).map((r, i) => ({ id: i, value: r.amount, label: r.key }));
@@ -398,6 +429,79 @@ export default function Dashboard() {
               ]}
             />
           </div>
+        </ChartCard>
+      </div>
+
+      {/* Products sold + income by source (follow the date range) */}
+      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ChartCard
+          title="Products sold"
+          subtitle="Units sold (selected range)"
+        >
+          {pmTopProducts.length === 0 ? (
+            <Empty />
+          ) : (
+            <div className="overflow-x-auto">
+              <BarChart
+                height={Math.max(220, pmTopProducts.length * 42)}
+                layout="horizontal"
+                margin={{ left: 130 }}
+                yAxis={[{ scaleType: "band", data: pmTopProducts.map((p) => p.name) }]}
+                series={[
+                  {
+                    data: pmTopProducts.map((p) => p.qty),
+                    label: "Units sold",
+                    color: "#6366f1",
+                  },
+                ]}
+              />
+            </div>
+          )}
+        </ChartCard>
+
+        <ChartCard
+          title="Income by source"
+          subtitle="What makes up income (selected range)"
+        >
+          {pmIncBySource.length === 0 ? (
+            <Empty />
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <BarChart
+                  height={Math.max(200, pmIncBySource.length * 42)}
+                  layout="horizontal"
+                  margin={{ left: 130 }}
+                  yAxis={[{ scaleType: "band", data: pmIncBySource.map((r) => r.key) }]}
+                  series={[
+                    {
+                      data: pmIncBySource.map((r) => r.amount),
+                      label: "Income",
+                      color: "#16a34a",
+                    },
+                  ]}
+                />
+              </div>
+              {/* How many of each + amount */}
+              <div className="mt-2 space-y-1 border-t border-gray-100 pt-2 text-sm">
+                {pmIncBySource.map((r) => (
+                  <div key={r.key} className="flex justify-between">
+                    <span className="text-gray-700">
+                      {r.key}{" "}
+                      <span className="text-xs text-gray-400">({r.count}×)</span>
+                    </span>
+                    <span className="font-medium text-gray-900">
+                      {formatCurrency(r.amount)}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex justify-between border-t border-gray-100 pt-1 font-semibold text-gray-900">
+                  <span>Total</span>
+                  <span>{formatCurrency(pmIncTotal)}</span>
+                </div>
+              </div>
+            </>
+          )}
         </ChartCard>
       </div>
 

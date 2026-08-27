@@ -7,7 +7,7 @@ import StatCard from "../components/ui/StatCard";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import DateRangePicker, {
   inRange,
-  currentMonthRange,
+  lastMonthsRange,
 } from "../components/ui/DateRangePicker";
 import VendorForm from "../components/forms/VendorForm";
 import {
@@ -71,7 +71,7 @@ export default function VendorDetails() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-  const [dateRange, setDateRange] = useState(currentMonthRange());
+  const [dateRange, setDateRange] = useState(lastMonthsRange(6));
   const [viewMode, setViewMode] = useState("batch"); // "batch" | "list"
   const [confirmBatch, setConfirmBatch] = useState(null); // purchase batch to delete
   const [deletingBatch, setDeletingBatch] = useState(false);
@@ -137,6 +137,39 @@ export default function VendorDetails() {
   );
   const batches = groupByBatch(filteredPurchases);
 
+  // Frequently bought — over the last 6 months (fixed window, ignores the filter
+  // above). Grouped per product: how often it was bought, total qty, and the most
+  // recent buying price. Sorted by how often it's bought.
+  const freqWindow = lastMonthsRange(6);
+  const freqBought = (() => {
+    const byProduct = new Map();
+    for (const t of purchases) {
+      if (!inRange(t.created_at, freqWindow.start, freqWindow.end)) continue;
+      const key = t.product_id || t.product?.name;
+      if (!key) continue;
+      const cur = byProduct.get(key) || {
+        key,
+        product_id: t.product_id,
+        name: t.product?.name || "-",
+        unit: t.product?.unit || "",
+        count: 0,
+        qty: 0,
+        lastPrice: null,
+        lastDate: null,
+      };
+      cur.count += 1;
+      cur.qty += Number(t.quantity) || 0;
+      if (!cur.lastDate || t.created_at > cur.lastDate) {
+        cur.lastDate = t.created_at;
+        cur.lastPrice = t.price_per_unit;
+      }
+      byProduct.set(key, cur);
+    }
+    return [...byProduct.values()]
+      .sort((a, b) => b.count - a.count || b.qty - a.qty)
+      .slice(0, 8);
+  })();
+
   return (
     <div>
       <Link
@@ -198,6 +231,57 @@ export default function VendorDetails() {
           />
         </div>
       </div>
+
+      {/* Frequently bought — last 6 months, with the latest buying price */}
+      {freqBought.length > 0 && (
+        <div className="mb-6 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-100 px-4 py-3">
+            <h3 className="font-semibold text-gray-800">
+              🔁 Frequently bought{" "}
+              <span className="font-normal text-gray-400">(last 6 months)</span>
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="px-4 py-2">Product</th>
+                  <th className="px-4 py-2 text-right">Times bought</th>
+                  <th className="px-4 py-2 text-right">Total qty</th>
+                  <th className="px-4 py-2 text-right">Latest price</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {freqBought.map((f) => (
+                  <tr key={f.key}>
+                    <td className="px-4 py-2 text-gray-800">
+                      {f.product_id ? (
+                        <Link
+                          to={`/products/${f.product_id}`}
+                          className="text-indigo-600 hover:underline"
+                        >
+                          {f.name}
+                        </Link>
+                      ) : (
+                        f.name
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-right text-gray-600">
+                      {f.count}×
+                    </td>
+                    <td className="px-4 py-2 text-right text-gray-600">
+                      {f.qty} {f.unit}
+                    </td>
+                    <td className="px-4 py-2 text-right font-medium text-gray-900">
+                      {formatCurrency(f.lastPrice)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -424,8 +508,11 @@ const emptyLine = {
   new_name: "",
   quantity: "",
   price_per_unit: "",
+  total_cost: "", // line total (qty × cost) — entering it back-fills the cost
   selling_price: "",
 };
+
+const round2 = (n) => Math.round(n * 100) / 100;
 
 const todayStr = () => new Date().toISOString().split("T")[0];
 
@@ -457,6 +544,28 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
 
   const setLine = (i, field, value) =>
     setLines((rows) => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+
+  // Qty / Cost / Total are linked: total = qty × cost. Editing any one keeps the
+  // other in sync — enter Qty 10 + Total 300 and Cost fills to 30, and vice versa.
+  const setLineMoney = (i, field, value) =>
+    setLines((rows) =>
+      rows.map((r, idx) => {
+        if (idx !== i) return r;
+        const next = { ...r, [field]: value };
+        const qty = Number(next.quantity) || 0;
+        const hasCost = next.price_per_unit !== "" && !isNaN(Number(next.price_per_unit));
+        if (field === "quantity") {
+          if (hasCost) next.total_cost = qty ? String(round2(qty * Number(next.price_per_unit))) : "";
+          else if (next.total_cost !== "")
+            next.price_per_unit = qty ? String(round2(Number(next.total_cost) / qty)) : "";
+        } else if (field === "price_per_unit") {
+          next.total_cost = qty && value !== "" ? String(round2(qty * Number(value))) : next.total_cost;
+        } else if (field === "total_cost") {
+          next.price_per_unit = qty && value !== "" ? String(round2(Number(value) / qty)) : next.price_per_unit;
+        }
+        return next;
+      })
+    );
   const addLine = () => setLines((rows) => [...rows, { ...emptyLine }]);
   const removeLine = (i) =>
     setLines((rows) => (rows.length > 1 ? rows.filter((_, idx) => idx !== i) : rows));
@@ -669,7 +778,7 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
                   ×
                 </button>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">Qty</label>
                   <input
@@ -677,7 +786,7 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
                     min="0"
                     step="any"
                     value={l.quantity}
-                    onChange={(e) => setLine(i, "quantity", e.target.value)}
+                    onChange={(e) => setLineMoney(i, "quantity", e.target.value)}
                     className={inputClass}
                   />
                 </div>
@@ -688,8 +797,21 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
                     min="0"
                     step="any"
                     value={l.price_per_unit}
-                    onChange={(e) => setLine(i, "price_per_unit", e.target.value)}
+                    onChange={(e) => setLineMoney(i, "price_per_unit", e.target.value)}
                     className={inputClass}
+                    placeholder="per unit"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Total ₹</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={l.total_cost}
+                    onChange={(e) => setLineMoney(i, "total_cost", e.target.value)}
+                    className={inputClass}
+                    placeholder="qty × cost"
                   />
                 </div>
                 <div>

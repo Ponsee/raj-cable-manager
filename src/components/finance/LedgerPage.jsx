@@ -19,12 +19,13 @@ import {
 import { getWorkers } from "../../services/workersService";
 import { getVendors } from "../../services/vendorsService";
 import { useAuth } from "../../context/AuthContext";
-import { ROLES } from "../../constants";
+import { ROLES, ID_RECHARGE_CATEGORY } from "../../constants";
 import {
   AddTransactionModal,
   typeInfoFor,
 } from "../../pages/WorkerDetails";
 import { BulkPurchaseModal } from "../../pages/VendorDetails";
+import IdRechargeModal from "./IdRechargeModal";
 import { formatCurrency, formatDate } from "../../utils/format";
 import { exportMonthlyExcel } from "../../utils/excel";
 
@@ -33,6 +34,28 @@ const inputClass =
 
 const todayStr = () => new Date().toISOString().split("T")[0];
 const dayKey = (ts) => new Date(ts).toISOString().split("T")[0];
+
+// A month as a single comparable integer: year*12 + month(0-based).
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const monthIndexOf = (ts) => {
+  const d = new Date(ts);
+  return d.getFullYear() * 12 + d.getMonth();
+};
+const monthIndexLabel = (idx) => `${MONTHS[idx % 12]} ${Math.floor(idx / 12)}`;
+// The month an "ID Recharge" note is FOR, e.g. "TCCL 041 · for Jul 2026" → index.
+// Falls back to null so the caller can use the paid-on date instead.
+const forMonthIndex = (note) => {
+  const m = String(note || "").match(/·\s*for\s+([A-Za-z]{3})\s+(\d{4})/);
+  if (!m) return null;
+  const mi = MONTHS.indexOf(m[1]);
+  if (mi < 0) return null;
+  return Number(m[2]) * 12 + mi;
+};
+// Parse the ID (first token before " · ") from an ID-Recharge note.
+const rechargeIdOf = (note) => String(note || "").split(" · ")[0].trim();
 
 // One reusable money ledger, used by both Income and Expense.
 // config: { table, title, subtitle, addLabel, accent, categories, totalLabel }
@@ -49,12 +72,30 @@ export default function LedgerPage({ config }) {
     lockedHint = "",
     unifiedAdd = false, // expense: also add worker pay / product purchase
     paymentFilter = false, // show Cash / Online / Split filter chips
+    idRecharge = false, // expense: offer the "ID Recharge" quick-add form
+    // Categories kept out of the manual add dropdown but NOT locked in the table
+    // (they have their own add form, e.g. ID Recharge — still freely deletable).
+    hiddenCategories = [],
   } = config;
 
   // Filter chips for how the money moved. "All" + the payment methods.
   const PAY_CHIPS = ["all", "Cash", "Online", "Split"];
   // A row's payment method (old rows with no value count as Cash, the DB default).
   const payOf = (e) => e.payment_method || "Cash";
+
+  // The date a row is ATTRIBUTED to for totals / month filters. Normally the
+  // paid-on date (created_at). ID Recharge is special: it's deducted from the
+  // month it's FOR (parsed from the note), so a recharge paid in Aug "for Jul"
+  // counts under Jul — even though the list still shows its real paid date.
+  const forMonthTs = (note) => {
+    const idx = forMonthIndex(note);
+    if (idx == null) return null;
+    return new Date(Math.floor(idx / 12), idx % 12, 1).toISOString();
+  };
+  const attribDate = (e) =>
+    idRecharge && e.category === ID_RECHARGE_CATEGORY
+      ? forMonthTs(e.note) || e.created_at
+      : e.created_at;
 
   const { role } = useAuth();
   const isAdmin = role === ROLES.ADMIN;
@@ -72,6 +113,7 @@ export default function LedgerPage({ config }) {
   const [chooserStart, setChooserStart] = useState(null); // reopen at a step on Back
   const [pickedWorker, setPickedWorker] = useState(null);
   const [pickedVendor, setPickedVendor] = useState(null);
+  const [rechargeOpen, setRechargeOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -102,7 +144,7 @@ export default function LedgerPage({ config }) {
   const usedCats = [...new Set(entries.map((e) => e.category).filter(Boolean))];
 
   const filtered = entries.filter((e) => {
-    if (!inRange(e.created_at, range.start, range.end)) return false;
+    if (!inRange(attribDate(e), range.start, range.end)) return false;
     if (catFilter !== "all" && e.category !== catFilter) return false;
     if (paymentFilter && payFilter !== "all" && payOf(e) !== payFilter)
       return false;
@@ -145,7 +187,7 @@ export default function LedgerPage({ config }) {
   })();
   const sumForMonth = (m) =>
     entries
-      .filter((e) => monthOf(e.created_at) === m)
+      .filter((e) => monthOf(attribDate(e)) === m)
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const thisMonthTotal = sumForMonth(nowMonth);
   const lastMonthTotal = sumForMonth(nowMonth - 1);
@@ -153,6 +195,36 @@ export default function LedgerPage({ config }) {
     lastMonthTotal > 0
       ? Math.round(((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100)
       : null;
+
+  // ID Recharge: this-month vs last-month spend, bucketed by the month each
+  // recharge is FOR (a payment made in Aug but "for Jul" counts under Jul), not
+  // by when it was paid. Ignores the date-range filter — it's a fixed view.
+  const rechargeSummary = (() => {
+    if (!idRecharge) return null;
+    const rows = entries.filter((e) => e.category === ID_RECHARGE_CATEGORY);
+    const thisM = nowMonth;
+    const lastM = nowMonth - 1;
+    let thisTotal = 0;
+    let lastTotal = 0;
+    const byId = {}; // id -> { this, last }
+    for (const e of rows) {
+      const bucket = forMonthIndex(e.note) ?? monthIndexOf(e.created_at);
+      const amt = Number(e.amount) || 0;
+      const id = rechargeIdOf(e.note) || "—";
+      if (!byId[id]) byId[id] = { this: 0, last: 0 };
+      if (bucket === thisM) {
+        thisTotal += amt;
+        byId[id].this += amt;
+      } else if (bucket === lastM) {
+        lastTotal += amt;
+        byId[id].last += amt;
+      }
+    }
+    const perId = Object.entries(byId)
+      .filter(([, v]) => v.this || v.last)
+      .sort((a, b) => b[1].this + b[1].last - (a[1].this + a[1].last));
+    return { thisTotal, lastTotal, thisM, lastM, perId, count: rows.length };
+  })();
 
   const exportExcel = () =>
     exportMonthlyExcel({
@@ -252,6 +324,58 @@ export default function LedgerPage({ config }) {
           accent="indigo"
         />
       </div>
+
+      {/* ID Recharge: this month vs last month (by the month each is FOR) */}
+      {rechargeSummary && rechargeSummary.count > 0 && (
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
+            <span>📶</span> ID Recharge
+            <span className="font-normal text-gray-400">
+              (by the month each recharge is for)
+            </span>
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg bg-indigo-50 px-3 py-2">
+              <p className="text-xs text-indigo-500">
+                This month · {monthIndexLabel(rechargeSummary.thisM)}
+              </p>
+              <p className="text-lg font-bold text-indigo-700">
+                {formatCurrency(rechargeSummary.thisTotal)}
+              </p>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2">
+              <p className="text-xs text-gray-500">
+                Last month · {monthIndexLabel(rechargeSummary.lastM)}
+              </p>
+              <p className="text-lg font-bold text-gray-700">
+                {formatCurrency(rechargeSummary.lastTotal)}
+              </p>
+            </div>
+          </div>
+          {rechargeSummary.perId.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {rechargeSummary.perId.map(([id, v]) => (
+                <div
+                  key={id}
+                  className="flex items-center justify-between text-sm"
+                >
+                  <span className="text-gray-700">{id}</span>
+                  <span className="text-gray-500">
+                    This{" "}
+                    <span className="font-medium text-indigo-700">
+                      {formatCurrency(v.this)}
+                    </span>{" "}
+                    · Last{" "}
+                    <span className="font-medium text-gray-700">
+                      {formatCurrency(v.last)}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* By-category breakdown (for the selected range) */}
       {catBreakdown.length > 0 && (
@@ -414,7 +538,7 @@ export default function LedgerPage({ config }) {
         table={table}
         title={addLabel}
         defaultCategories={categories}
-        excludeCategories={lockedCategories}
+        excludeCategories={[...lockedCategories, ...hiddenCategories]}
         onSaved={async () => {
           setAddOpen(false);
           await load();
@@ -427,10 +551,15 @@ export default function LedgerPage({ config }) {
             open={kindOpen}
             startKind={chooserStart}
             showWorker={isAdmin}
+            showRecharge={idRecharge}
             onClose={() => setKindOpen(false)}
             onGeneral={() => {
               setKindOpen(false);
               setAddOpen(true);
+            }}
+            onRecharge={() => {
+              setKindOpen(false);
+              setRechargeOpen(true);
             }}
             onWorker={(w) => {
               setKindOpen(false);
@@ -478,6 +607,22 @@ export default function LedgerPage({ config }) {
               }}
             />
           )}
+
+          {idRecharge && (
+            <IdRechargeModal
+              open={rechargeOpen}
+              onClose={() => setRechargeOpen(false)}
+              onBack={() => {
+                setRechargeOpen(false);
+                setChooserStart(null);
+                setKindOpen(true);
+              }}
+              onSaved={async () => {
+                setRechargeOpen(false);
+                await load();
+              }}
+            />
+          )}
         </>
       )}
 
@@ -505,8 +650,10 @@ function AddKindChooser({
   open,
   startKind,
   showWorker = false,
+  showRecharge = false,
   onClose,
   onGeneral,
+  onRecharge,
   onWorker,
   onVendor,
 }) {
@@ -544,6 +691,12 @@ function AddKindChooser({
                 <span className="text-2xl">🧾</span>
                 General expense
               </button>
+              {showRecharge && (
+                <button type="button" onClick={onRecharge} className={bigBtn}>
+                  <span className="text-2xl">📶</span>
+                  ID Recharge
+                </button>
+              )}
               {showWorker && (
                 <button type="button" onClick={() => setKind("worker")} className={bigBtn}>
                   <span className="text-2xl">👷</span>
