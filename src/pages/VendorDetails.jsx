@@ -708,6 +708,9 @@ export function BulkPurchaseModal({ open, onClose, vendor, onSaved, title, onBac
                       } else if (val && typeof val === "object") {
                         setLine(i, "product_id", val.id);
                         setLine(i, "new_name", "");
+                        // Pre-fill the sell price from the product (if it has one).
+                        if (val.selling_price != null && val.selling_price !== "")
+                          setLine(i, "selling_price", String(val.selling_price));
                       } else if (typeof val === "string" && val.trim()) {
                         setLine(i, "product_id", "__new__");
                         setLine(i, "new_name", val.trim());

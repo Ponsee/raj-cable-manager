@@ -375,6 +375,7 @@ badge per type with a per-type filter.
     qty 10 + total 300 → cost fills to 30; enter cost → total fills; changing qty
     re-derives whichever follows. `price_per_unit` stays the source of truth for
     the saved purchase (total is a data-entry helper; values rounded to 2 dp).
+    Picking an existing product **pre-fills Sell ₹** from its `selling_price`.
   - **Paid via** Cash / Online / **Split** on the order — stored on the combined
     expense (Split shows a 💵 Cash / 📱 Online breakdown in the total box).
   - `discount`/`transport` are stored on the **first row** of the batch (others 0)
@@ -496,7 +497,8 @@ badge per type with a per-type filter.
     past IDs remembered via `getRechargeIds()`), **amount**, a **For month** picker
     (`<input type=month>`, defaults to this month — *which month's amount it comes
     out of*), a **note** that **pre-fills** to `"<ID> · for <Mon YYYY>"` and stays
-    in sync until edited, **Paid via** (💵 Cash / 📱 Online), and a **Paid on** date
+    in sync until edited, **Paid via** (💵 Cash / 📱 Online — **defaults to Online**),
+    and a **Paid on** date
     (*the real payment date — what the ledger list shows/sorts by*). A **← Back**
     returns to the chooser. Books a normal expense under category **`ID Recharge`**
     (`ID_RECHARGE_CATEGORY`); the ID + month live in the note (no migration — the
@@ -653,7 +655,7 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 | `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / **Last 6 months** / This year / **Last year** / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()`, `lastMonthsRange(n)` |
 | `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals), **payment filter chips + "Paid via" column** (config `paymentFilter`) |
 | `components/finance/IncomeExpenseChart.jsx` | Shared income-vs-expense bar chart (Dashboard) |
-| `components/products/ProductPicker.jsx` | Searchable product Autocomplete **with image** (+ `renderProductOption`) |
+| `components/products/ProductPicker.jsx` | Searchable product Autocomplete **with image + selling price** in each option (+ `renderProductOption`) |
 | `components/products/StockLossModal.jsx` | Report loss/damage (Income + Product Details) |
 | `components/products/ReturnModal.jsx` | Customer return → stock back ± refund (Income + Product Details) |
 | `components/products/OpeningStockModal.jsx` | Bulk **Opening Stock** entry (no expense) |

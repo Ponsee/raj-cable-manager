@@ -4,10 +4,13 @@ import Autocomplete from "@mui/material/Autocomplete";
 import TextField from "@mui/material/TextField";
 import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
+import { formatCurrency } from "../../utils/format";
 
-// Reusable option row: image + name + code/stock line. Reused by add-new pickers.
+// Reusable option row: image + name + code/stock line + selling price. Reused by
+// add-new pickers.
 export function renderProductOption(props, p) {
   const { key, ...rest } = props;
+  const hasSell = p.selling_price != null && p.selling_price !== "";
   return (
     <Box
       component="li"
@@ -22,13 +25,18 @@ export function renderProductOption(props, p) {
       >
         {p.image_url ? null : "📦"}
       </Avatar>
-      <Box sx={{ minWidth: 0 }}>
+      <Box sx={{ minWidth: 0, flex: 1 }}>
         <Box sx={{ fontSize: 14, lineHeight: 1.2 }}>{p.name}</Box>
         <Box sx={{ fontSize: 12, color: "text.secondary" }}>
           {p.code ? `${p.code} · ` : ""}
           {p.stock != null ? `${p.stock} ${p.unit || "in stock"}` : p.unit || ""}
         </Box>
       </Box>
+      {hasSell && (
+        <Box sx={{ fontSize: 13, fontWeight: 600, color: "success.main", whiteSpace: "nowrap" }}>
+          {formatCurrency(p.selling_price)}
+        </Box>
+      )}
     </Box>
   );
 }
