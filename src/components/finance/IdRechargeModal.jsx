@@ -40,7 +40,7 @@ export default function IdRechargeModal({ open, onClose, onBack, onSaved }) {
   const [month, setMonth] = useState(thisMonth());
   const [note, setNote] = useState("");
   const [noteTouched, setNoteTouched] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
+  const [paymentMethod, setPaymentMethod] = useState("Online"); // recharges are usually paid online
   const [date, setDate] = useState(todayStr());
   const [idOptions, setIdOptions] = useState(RECHARGE_IDS);
   const [saving, setSaving] = useState(false);
@@ -53,7 +53,7 @@ export default function IdRechargeModal({ open, onClose, onBack, onSaved }) {
       setMonth(thisMonth());
       setNote("");
       setNoteTouched(false);
-      setPaymentMethod(PAYMENT_METHODS[0]);
+      setPaymentMethod("Online");
       setDate(todayStr());
       setError("");
       // Seed with the fixed list + any IDs used before, de-duplicated.
