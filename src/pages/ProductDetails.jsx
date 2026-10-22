@@ -20,6 +20,7 @@ import {
   addStockTransaction,
   updateProduct,
   deleteProduct,
+  purchaseTimestamp,
 } from "../services/productsService";
 import { getVendors, createVendor } from "../services/vendorsService";
 import { calcStock, isLowStock, pricesByVendor } from "../utils/productCalc";
@@ -757,8 +758,11 @@ function Row({ label, value }) {
 }
 
 // ---- Add Purchase / Sale ----
+const todayStr = () => new Date().toISOString().split("T")[0];
+
 function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
   const [type, setType] = useState(STOCK_TYPES.PURCHASE);
+  const [date, setDate] = useState(todayStr());
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
   const [sellingPrice, setSellingPrice] = useState("");
@@ -775,6 +779,7 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
   useEffect(() => {
     if (open) {
       getVendors().then(setVendors).catch(() => {});
+      setDate(todayStr());
       setSellingPrice(product.selling_price ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -786,6 +791,7 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
 
   const reset = () => {
     setType(STOCK_TYPES.PURCHASE);
+    setDate(todayStr());
     setQuantity("");
     setPrice("");
     setSellingPrice(product.selling_price ?? "");
@@ -862,6 +868,8 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
         vendor_id,
         vendor_name,
         note: note.trim() || null,
+        // Backdate to the chosen day (keeps the current time-of-day for ordering).
+        ...(purchaseTimestamp(date) ? { created_at: purchaseTimestamp(date) } : {}),
       };
 
       await addStockTransaction(payload, {
@@ -893,6 +901,9 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
   const isPurchase = type === STOCK_TYPES.PURCHASE;
   const isUsage = type === STOCK_TYPES.USAGE;
   const isOpening = type === STOCK_TYPES.OPENING;
+  // Stock after saving: purchase / opening add, sale / service use remove.
+  const afterStock =
+    Math.round((currentStock + (isPurchase || isOpening ? qty : -qty)) * 1000) / 1000;
   const stockOptions = [
     { v: STOCK_TYPES.PURCHASE, icon: "🛒", label: "Purchase" },
     { v: STOCK_TYPES.SALE, icon: "💰", label: "Sale" },
@@ -950,17 +961,47 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
           {helpText}
         </p>
 
-        <Field label={`Quantity (${product.unit})`}>
-          <input
-            type="number"
-            min="0"
-            step="any"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            className={inputClass}
-            placeholder="e.g. 10"
-          />
-        </Field>
+        {/* Date + quantity side by side so the form stays compact */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Date">
+            <input
+              type="date"
+              value={date}
+              max={todayStr()}
+              onChange={(e) => setDate(e.target.value)}
+              className={inputClass + " h-[38px] bg-white"}
+            />
+          </Field>
+
+          <Field label={`Quantity (${product.unit})`}>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className={inputClass + " h-[38px]"}
+              placeholder="e.g. 10"
+            />
+          </Field>
+        </div>
+
+        {/* Stock before → after this entry */}
+        <div className="flex items-center justify-between rounded-lg bg-indigo-50 px-3 py-2 text-sm">
+          <span className="text-indigo-700">
+            Current stock:{" "}
+            <b>
+              {currentStock} {product.unit}
+            </b>
+          </span>
+          <span
+            className={`font-semibold ${
+              afterStock < 0 ? "text-red-600" : "text-indigo-800"
+            }`}
+          >
+            After: {afterStock} {product.unit}
+          </span>
+        </div>
 
         {!isUsage && (
           <Field

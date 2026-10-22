@@ -1,9 +1,19 @@
 # Raj Cable Manager — Module Reference (Workers · Products · Vendors · Income · Expense · Pending)
 
-Last updated: 2026-07-17. This documents the features built so far in the
+Last updated: 2026-10-22. This documents the features built so far in the
 **Workers**, **Products**, **Vendors**, **Income**, **Expense**, and
 **Pending Payments** modules, plus the setup steps (migrations / Supabase
 config) needed for them to work.
+
+> **What's new (2026-10-22):** **Category drill-downs** — tap a category on the
+> Expense page (or a source on the Income page) to see what's behind it
+> (purchases by vendor, worker pay by worker, sales by product). **Expense KPI
+> cards** now follow the Income order (incl. Cash / Online). **Paid via**
+> (Cash / Online / Split) on the **General expense** form. **Add Stock Entry**
+> gained a **date picker** and a **Current → After stock** preview.
+> **Subcategory filter** on the Products list. **New Internet** income no longer
+> requires a product (customer's own modem). A plan for **customer / modem / FTU
+> tracking** is in `FTU_MODEM_TRACKING_PLAN.md` (not built yet).
 
 > **What's new (2026-06-27):** **Cash / Online / Split** payment method on
 > worker pay, purchases (single + bulk), and refunds — with a Split mode that
@@ -280,7 +290,11 @@ Both money tables carry **how the money moved**:
 - **Return** ↩️ — stock **in** (customer brought it back), optional **refund** out.
 
 The Add Stock modal (Product Details) offers Purchase / Sale / Used / **Opening
-stock**; Returns + Loss are their own buttons. Stock history shows a coloured
+stock**; Returns + Loss are their own buttons. **Every type has a Date picker**
+(default today, no future dates; saved via `purchaseTimestamp`, keeping the
+current time-of-day, and shared with the linked expense / income row). Date and
+Quantity sit side by side. A bar shows **Current stock → After** (purchase /
+opening add, sale / service remove; red if it would go below 0). Stock history shows a coloured
 badge per type with a per-type filter.
 
 ### Opening stock (load what you already have — Business Rule note)
@@ -347,8 +361,11 @@ badge per type with a per-type filter.
   product, and records a Sale. (Needs HTTPS or localhost.)
 
 ### Full CRUD
-- List: Add, **Edit**, **Delete** per row, search + type/category filters
-  (category filter includes newly-added categories).
+- List: Add, **Edit**, **Delete** per row, search + type / category /
+  **subcategory** filters (category filter includes newly-added categories). The
+  **subcategory dropdown only lists subcategories used under the chosen
+  category** (all of them when "All categories"), resets when the category
+  changes, and is disabled when there are none.
 - Details: Edit + **Delete**, stock cards, low-stock banner, **date-range filter**
   on stock history, QR/print.
 
@@ -401,6 +418,10 @@ badge per type with a per-type filter.
   - `device` (Shop Collection, New Cable HD/SD, New Internet) → **multiple
     products** (each qty + price), optional **charge** (e.g. install). Priced
     item → **Sale** (income + stock out); ₹0 item → **Used** (stock out, no income).
+    **New Internet has `productOptional: true`** — the product can be left empty
+    (customer uses their own modem); then the **install charge must be > 0**
+    (nothing else would be recorded). Only the charge is saved as income and
+    stock is untouched. Other device sources still require a product.
   - `provider` (Internet Recharge) → provider (`INTERNET_PROVIDERS`, add-new) + amount.
 - Source order (most-used first): **Cable Collection · Shop Collection · Daily
   Collection** · New Cable · New Internet · Internet Recharge · Other (entry 1
@@ -443,6 +464,11 @@ badge per type with a per-type filter.
 - Stat cards: Today's collection · Total (range) · **This vs last month** (▲/▼ %,
   up = green for income) · **Cash** · **Online** · Avg/day · **Days with income**.
 - **By-source breakdown** list (each source + total + % bar) for the range.
+  **Tap a source** → `SourceDetailsModal`: product sales grouped by **product**
+  (qty sold, qty × price per row), other rows (recharge / charges / collections)
+  grouped by the note's first part (e.g. provider); each row shows date, payment
+  method and the income amount, so the total always equals the breakdown figure.
+  Product names come from `financeService.getSaleDetails(stock_tx_ids)`.
 - Filters: search, **payment** (All/Cash/Online), **Export Excel** (month-wise
   sheets via `utils/excel.js`). Per-row 🗑️ delete too.
 
@@ -462,9 +488,23 @@ badge per type with a per-type filter.
 
 - Shared **LedgerPage** ledger (table `expenses`). The **DateRangePicker** is in
   the header (next to Add Expense); all cards + breakdown use that range.
-- **Cards:** Total Expense · **This vs last month** (▲/▼ %, up = red for expense) ·
-  Today · Avg/day · **Top category** · Entries.
+- **Cards** (same order as Income): **Today · Total (range) · This vs last month**
+  (▲/▼ %, up = red for expense) **· Cash · Online · Avg/day · Days with expense**.
+  A **Split** payment adds its own `cash_amount` to Cash and the rest to Online.
+  (Top category / Entries cards were dropped; the breakdown below still shows
+  the top category.)
 - **By-category breakdown** list (each category + total + % bar) for the range.
+  **Tap a category** → `CategoryDetailsModal`:
+  - **Product purchase** → grouped by **vendor** (subtotal), each item with
+    date · product · qty · rate · cost, plus bulk **transport / discount**.
+    Uses `financeService.getPurchaseDetails` (stock rows linked by `expense_id`).
+  - **Worker categories** (Staff salary / payment / advance / bonus, Worker
+    expense, Contract work) → grouped by **worker**; each row shows the **amount
+    actually paid** (the expense amount) with the gross "work value" underneath
+    when an advance was adjusted — so totals match the card.
+    Uses `getWorkerPayDetails`.
+  - **Everything else** → plain list (date, note, paid via, amount).
+  - Expense rows with no itemised link (older entries) show under "Other entries".
 - Filter row = search + category filter + **Export Excel** (month-wise sheets).
 - **Payment filter chips** (config `paymentFilter`): **All / Cash / Online /
   Split** — filters the ledger (and so all cards + breakdown) by how it was paid.
@@ -487,7 +527,10 @@ badge per type with a per-type filter.
 
 ### Unified "Add Expense" (config `unifiedAdd: true`)
 - The **+ Add Expense** button opens a **chooser** (with breadcrumb + Back):
-  - **General expense** → batch form: one date, several category + amount + note lines.
+  - **General expense** → batch form: one date, several category + amount + note
+    lines, each with **Paid via** (Cash / Online / **Split** — Split shows two
+    boxes that auto-fill the remainder and must add up to the amount). Saved to
+    the expense's `payment_method` / `cash_amount` / `online_amount`.
   - **Worker pay** *(admin only)* → pick a worker → the **real** Worker
     `AddTransactionModal` (all types) → records the worker entry **and** its expense.
   - **Product purchase** → pick a vendor → the **real** `BulkPurchaseModal` →
@@ -538,7 +581,9 @@ badge per type with a per-type filter.
   lets you clean up orphaned auto-expenses left by pre-link deletes.)
 - `services/financeService.js`: `getEntries` (income also selects
   `payment_method`, `stock_tx_id`, with graceful fallbacks), `addEntry`,
-  `updateEntry`, `deleteEntry`, `deleteIncomeEntry`, `deleteIncomeBatch`.
+  `updateEntry`, `deleteEntry`, `deleteIncomeEntry`, `deleteIncomeBatch`, plus the
+  drill-down queries `getPurchaseDetails`, `getWorkerPayDetails`,
+  `getSaleDetails` (chunked `in (...)` lookups).
 
 ---
 
@@ -654,6 +699,8 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 | `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
 | `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / **Last 6 months** / This year / **Last year** / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()`, `lastMonthsRange(n)` |
 | `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals), **payment filter chips + "Paid via" column** (config `paymentFilter`) |
+| `components/finance/CategoryDetailsModal.jsx` | Expense "By category" drill-down (purchases by vendor, worker pay by worker, plain entries) |
+| `components/finance/SourceDetailsModal.jsx` | Income "By source" drill-down (sales by product, other rows by note) |
 | `components/finance/IncomeExpenseChart.jsx` | Shared income-vs-expense bar chart (Dashboard) |
 | `components/products/ProductPicker.jsx` | Searchable product Autocomplete **with image + selling price** in each option (+ `renderProductOption`) |
 | `components/products/StockLossModal.jsx` | Report loss/damage (Income + Product Details) |

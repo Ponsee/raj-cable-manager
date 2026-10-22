@@ -406,7 +406,7 @@ export async function uploadProductImage(file) {
 // Turn a date input value ("YYYY-MM-DD") into a timestamp. We keep the current
 // time-of-day so two separate orders on the same date stay in distinct batches.
 // Empty value → undefined, letting the DB default created_at to now().
-function purchaseTimestamp(dateStr) {
+export function purchaseTimestamp(dateStr) {
   if (!dateStr) return undefined;
   const now = new Date();
   const d = new Date(dateStr);

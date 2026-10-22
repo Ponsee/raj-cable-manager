@@ -150,7 +150,8 @@ export const INCOME_CATEGORIES = [
 // ---- Income sources (cable TV / broadband business) ----
 // mode drives which fields the Add-Income form shows:
 //   simple   -> just an amount
-//   device   -> product (reduces stock); optional charge if `charge: true`
+//   device   -> product (reduces stock); optional charge if `charge: true`;
+//               `productOptional: true` lets it be saved without any product
 //   provider -> provider dropdown + amount
 // device notes: a product with price 0 is treated as "free" (stock still drops,
 // no sale income); `variants` adds a HD/SD style toggle; `charge` adds a
@@ -181,7 +182,8 @@ export const INCOME_SOURCES = [
     label: "New Internet",
     icon: "🌐",
     mode: "device",
-    hint: "Pick the modem / ONU (price 0 if free)",
+    hint: "Pick the modem / ONU (price 0 if free) — optional if the customer uses their own modem",
+    productOptional: true, // no product needed (own modem); then a charge is required
     charge: true,
     chargeLabel: "Install charge (₹ — 0 if free)",
   },
