@@ -19,13 +19,19 @@ import {
 import { getWorkers } from "../../services/workersService";
 import { getVendors } from "../../services/vendorsService";
 import { useAuth } from "../../context/AuthContext";
-import { ROLES, ID_RECHARGE_CATEGORY } from "../../constants";
+import {
+  ROLES,
+  ID_RECHARGE_CATEGORY,
+  PAYMENT_METHODS_SPLIT,
+  PAYMENT_SPLIT,
+} from "../../constants";
 import {
   AddTransactionModal,
   typeInfoFor,
 } from "../../pages/WorkerDetails";
 import { BulkPurchaseModal } from "../../pages/VendorDetails";
 import IdRechargeModal from "./IdRechargeModal";
+import CategoryDetailsModal from "./CategoryDetailsModal";
 import { formatCurrency, formatDate } from "../../utils/format";
 import { exportMonthlyExcel } from "../../utils/excel";
 
@@ -67,7 +73,6 @@ export default function LedgerPage({ config }) {
     addLabel,
     accent,
     categories,
-    totalLabel,
     lockedCategories = [],
     lockedHint = "",
     unifiedAdd = false, // expense: also add worker pay / product purchase
@@ -114,6 +119,7 @@ export default function LedgerPage({ config }) {
   const [pickedWorker, setPickedWorker] = useState(null);
   const [pickedVendor, setPickedVendor] = useState(null);
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [detailCat, setDetailCat] = useState(null); // category opened from "By category"
 
   const load = async () => {
     setLoading(true);
@@ -167,6 +173,15 @@ export default function LedgerPage({ config }) {
   const dayCount = new Set(filtered.map((e) => dayKey(e.created_at))).size;
   const avgPerDay = dayCount ? total / dayCount : 0;
 
+  // Cash vs online. A Split row contributes its own cash / online parts; anything
+  // that isn't Cash or Split counts as online.
+  const cashTotal = filtered.reduce((sum, e) => {
+    const m = payOf(e);
+    if (m === "Split") return sum + (Number(e.cash_amount) || 0);
+    return m === "Cash" ? sum + (Number(e.amount) || 0) : sum;
+  }, 0);
+  const onlineTotal = total - cashTotal;
+
   // Biggest category in the current range.
   const catTotals = {};
   for (const e of filtered) {
@@ -174,7 +189,6 @@ export default function LedgerPage({ config }) {
     catTotals[c] = (catTotals[c] || 0) + (Number(e.amount) || 0);
   }
   const catBreakdown = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
-  const topCat = catBreakdown[0];
 
   // This calendar month vs last calendar month (fixed — ignores the range).
   const monthOf = (ts) => {
@@ -270,10 +284,16 @@ export default function LedgerPage({ config }) {
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard
-          label={totalLabel}
+          label="Today"
+          value={formatCurrency(todayTotal)}
+          icon="📅"
+          accent={accent}
+        />
+        <StatCard
+          label="Total (range)"
           value={formatCurrency(total)}
           icon={accent === "green" ? "💰" : "💸"}
-          accent={accent}
+          accent="indigo"
         />
         <StatCard
           label="This vs last month"
@@ -296,10 +316,16 @@ export default function LedgerPage({ config }) {
           </p>
         </StatCard>
         <StatCard
-          label="Today"
-          value={formatCurrency(todayTotal)}
-          icon="📅"
+          label="Cash"
+          value={formatCurrency(cashTotal)}
+          icon="💵"
           accent="amber"
+        />
+        <StatCard
+          label="Online"
+          value={formatCurrency(onlineTotal)}
+          icon="📱"
+          accent="purple"
         />
         <StatCard
           label="Avg / day"
@@ -308,20 +334,10 @@ export default function LedgerPage({ config }) {
           accent="blue"
         />
         <StatCard
-          label="Top category"
-          value={topCat ? formatCurrency(topCat[1]) : formatCurrency(0)}
-          icon="🏷️"
-          accent="purple"
-        >
-          {topCat && (
-            <p className="mt-1 truncate text-xs text-gray-500">{topCat[0]}</p>
-          )}
-        </StatCard>
-        <StatCard
-          label="Entries"
-          value={filtered.length}
-          icon="🧾"
-          accent="indigo"
+          label="Days with expense"
+          value={dayCount}
+          icon="🗓️"
+          accent="orange"
         />
       </div>
 
@@ -381,13 +397,19 @@ export default function LedgerPage({ config }) {
       {catBreakdown.length > 0 && (
         <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
           <h3 className="mb-3 text-sm font-semibold text-gray-700">
-            By category <span className="font-normal text-gray-400">(selected range)</span>
+            By category <span className="font-normal text-gray-400">(selected range · tap a category for details)</span>
           </h3>
           <div className="space-y-2">
             {catBreakdown.map(([cat, amt]) => {
               const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
               return (
-                <div key={cat}>
+                <button
+                  type="button"
+                  key={cat}
+                  onClick={() => setDetailCat(cat)}
+                  className="block w-full rounded-lg px-1 py-0.5 text-left transition hover:bg-gray-50"
+                  title="View details"
+                >
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-700">{cat}</span>
                     <span className="font-medium text-gray-900">
@@ -401,7 +423,7 @@ export default function LedgerPage({ config }) {
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -531,6 +553,15 @@ export default function LedgerPage({ config }) {
           </div>
         )}
       </div>
+
+      {detailCat && (
+        <CategoryDetailsModal
+          open
+          onClose={() => setDetailCat(null)}
+          category={detailCat}
+          entries={filtered.filter((e) => (e.category || "Uncategorised") === detailCat)}
+        />
+      )}
 
       <AddEntryModal
         open={addOpen}
@@ -779,7 +810,11 @@ function AddEntryModal({
     category: defaultCategories[0] || "",
     amount: "",
     note: "",
+    paymentMethod: PAYMENT_METHODS_SPLIT[0], // Cash by default
+    cashAmount: "",
+    onlineAmount: "",
   });
+  const withPayment = table === "expenses"; // "Paid via" is recorded on expenses
 
   const [date, setDate] = useState(todayStr());
   const [lines, setLines] = useState([]);
@@ -821,6 +856,13 @@ function AddEntryModal({
         return setError(`Entry ${i + 1}: enter an amount greater than 0.`);
       if (!l.category.trim())
         return setError(`Entry ${i + 1}: choose or enter a category.`);
+      if (
+        withPayment &&
+        l.paymentMethod === PAYMENT_SPLIT &&
+        Math.round((Number(l.cashAmount) || 0) + (Number(l.onlineAmount) || 0)) !==
+          Math.round(Number(l.amount))
+      )
+        return setError(`Entry ${i + 1}: cash + online must add up to the amount.`);
     }
     setSaving(true);
     try {
@@ -830,6 +872,13 @@ function AddEntryModal({
           category: l.category.trim(),
           note: l.note,
           date,
+          ...(withPayment
+            ? {
+                paymentMethod: l.paymentMethod,
+                cashAmount: Number(l.cashAmount) || 0,
+                onlineAmount: Number(l.onlineAmount) || 0,
+              }
+            : {}),
         });
       }
       await onSaved();
@@ -909,6 +958,60 @@ function AddEntryModal({
                 onChange={(e) => updateLine(line._id, { note: e.target.value })}
                 fullWidth
               />
+              {withPayment && (
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Paid via</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {PAYMENT_METHODS_SPLIT.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => updateLine(line._id, { paymentMethod: m })}
+                        className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                          line.paymentMethod === m
+                            ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                            : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  {line.paymentMethod === PAYMENT_SPLIT && (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {[
+                        ["Cash (₹)", "cashAmount", "onlineAmount"],
+                        ["Online (₹)", "onlineAmount", "cashAmount"],
+                      ].map(([label, key, other]) => (
+                        <div key={key}>
+                          <label className="mb-1 block text-xs text-gray-500">
+                            {label}
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max={line.amount || undefined}
+                            step="any"
+                            value={line[key]}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              // Auto-fill the other part with what's left of the amount.
+                              updateLine(line._id, {
+                                [key]: v,
+                                [other]: String(
+                                  Math.max(0, (Number(line.amount) || 0) - (Number(v) || 0))
+                                ),
+                              });
+                            }}
+                            className={inputClass}
+                            placeholder="0"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>

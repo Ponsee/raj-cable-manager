@@ -30,6 +30,7 @@ export default function Products() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [subcategoryFilter, setSubcategoryFilter] = useState("all");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
@@ -114,6 +115,16 @@ export default function Products() {
     ...new Set([...PRODUCT_CATEGORIES, ...products.map((p) => p.category).filter(Boolean)]),
   ];
 
+  // Subcategory options depend on the chosen category (all of them if "All").
+  const subcategoryOptions = [
+    ...new Set(
+      products
+        .filter((p) => categoryFilter === "all" || p.category === categoryFilter)
+        .map((p) => p.subcategory?.trim())
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+
   // Top sellers (by all-time units sold) get a badge in the list.
   const bestSellerIds = new Set(
     [...products]
@@ -126,13 +137,15 @@ export default function Products() {
   const filtered = products.filter((p) => {
     const matchesCategory =
       categoryFilter === "all" || p.category === categoryFilter;
+    const matchesSubcategory =
+      subcategoryFilter === "all" || p.subcategory?.trim() === subcategoryFilter;
     const matchesType =
       typeFilter === "all" ||
       (p.product_type || "").split(",").includes(typeFilter);
     const matchesSearch =
       p.name?.toLowerCase().includes(search.toLowerCase()) ||
       p.subcategory?.toLowerCase().includes(search.toLowerCase());
-    return matchesCategory && matchesType && matchesSearch;
+    return matchesCategory && matchesSubcategory && matchesType && matchesSearch;
   })
     // Best sellers first (by all-time units sold); ties keep newest-first order.
     .sort((a, b) => (b.soldQty || 0) - (a.soldQty || 0));
@@ -175,10 +188,26 @@ export default function Products() {
         <select
           className={inputClass + " sm:w-44"}
           value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
+          onChange={(e) => {
+            setCategoryFilter(e.target.value);
+            setSubcategoryFilter("all");
+          }}
         >
           <option value="all">All categories</option>
           {categoryOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
+          className={inputClass + " sm:w-44"}
+          value={subcategoryFilter}
+          onChange={(e) => setSubcategoryFilter(e.target.value)}
+          disabled={subcategoryOptions.length === 0}
+        >
+          <option value="all">All subcategories</option>
+          {subcategoryOptions.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>

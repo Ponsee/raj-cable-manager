@@ -150,3 +150,55 @@ export async function getCategorySuggestions(table) {
   if (error) return [];
   return [...new Set((data || []).map((r) => r.category).filter(Boolean))];
 }
+
+// ---- Category drill-down (Expense page "By category" → details) ----
+
+// Run an `in (...)` query in chunks so a long id list never blows the URL limit.
+async function selectByExpenseIds(table, cols, expenseIds, extra = (q) => q) {
+  const out = [];
+  for (let i = 0; i < expenseIds.length; i += 100) {
+    const chunk = expenseIds.slice(i, i + 100);
+    const { data, error } = await extra(
+      supabase.from(table).select(cols).in("expense_id", chunk)
+    );
+    if (error) throw error;
+    out.push(...(data || []));
+  }
+  return out;
+}
+
+// Items bought for the given "Product purchase" expense rows (product, vendor,
+// qty, rate, discount / transport).
+export function getPurchaseDetails(expenseIds) {
+  return selectByExpenseIds(
+    "stock_transactions",
+    "id, expense_id, quantity, price_per_unit, total_amount, discount, transport, vendor_name, created_at, products(name, subcategory, code)",
+    expenseIds,
+    (q) => q.eq("type", "purchase").order("created_at", { ascending: false })
+  );
+}
+
+// Worker payments behind the given worker-related expense rows.
+export function getWorkerPayDetails(expenseIds) {
+  return selectByExpenseIds(
+    "worker_transactions",
+    "id, expense_id, type, amount, note, created_at, workers(name)",
+    expenseIds,
+    (q) => q.order("created_at", { ascending: false })
+  );
+}
+
+// Stock movements (product sales / returns) behind income rows, with product
+// names — for the Income page "By source" drill-down.
+export async function getSaleDetails(stockTxIds) {
+  const out = [];
+  for (let i = 0; i < stockTxIds.length; i += 100) {
+    const { data, error } = await supabase
+      .from("stock_transactions")
+      .select("id, quantity, price_per_unit, products(name, subcategory)")
+      .in("id", stockTxIds.slice(i, i + 100));
+    if (error) throw error;
+    out.push(...(data || []));
+  }
+  return out;
+}

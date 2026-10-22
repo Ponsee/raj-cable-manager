@@ -3,6 +3,7 @@ import PageHeader from "../components/ui/PageHeader";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import StatCard from "../components/ui/StatCard";
+import SourceDetailsModal from "../components/finance/SourceDetailsModal";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import DateRangePicker, {
   inRange,
@@ -103,6 +104,7 @@ export default function Income() {
   const [lossOpen, setLossOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
+  const [detailSrc, setDetailSrc] = useState(null); // source opened from "By source"
   const [confirmEntry, setConfirmEntry] = useState(null); // single entry to delete
   const [confirmBatch, setConfirmBatch] = useState(null); // whole day to delete
   const [deleting, setDeleting] = useState(false);
@@ -312,13 +314,19 @@ export default function Income() {
       {srcBreakdown.length > 0 && (
         <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
           <h3 className="mb-3 text-sm font-semibold text-gray-700">
-            By source <span className="font-normal text-gray-400">(selected range)</span>
+            By source <span className="font-normal text-gray-400">(selected range · tap a source for details)</span>
           </h3>
           <div className="space-y-2">
             {srcBreakdown.map(([src, amt]) => {
               const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
               return (
-                <div key={src}>
+                <button
+                  type="button"
+                  key={src}
+                  onClick={() => setDetailSrc(src)}
+                  className="block w-full rounded-lg px-1 py-0.5 text-left transition hover:bg-gray-50"
+                  title="View details"
+                >
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-700">{src}</span>
                     <span className="font-medium text-gray-900">
@@ -332,11 +340,20 @@ export default function Income() {
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
         </div>
+      )}
+
+      {detailSrc && (
+        <SourceDetailsModal
+          open
+          onClose={() => setDetailSrc(null)}
+          source={detailSrc}
+          entries={filtered.filter((e) => (e.category || "Other") === detailSrc)}
+        />
       )}
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -652,8 +669,14 @@ function validateLine(line) {
     return `${src.label}: enter an amount.`;
   if (src.mode === "device") {
     const items = line.items || [];
-    if (!items.some((it) => it.productId))
+    const hasProduct = items.some((it) => it.productId);
+    if (!hasProduct && !src.productOptional)
       return `${src.label}: pick at least one product.`;
+    // Product is optional (customer's own modem) — but then the charge is the income.
+    if (!hasProduct && !(Number(line.amount) > 0))
+      return `${src.label}: pick a product, or enter the ${
+        (src.chargeLabel || "charge").split(" (")[0].toLowerCase()
+      }.`;
     for (const it of items) {
       if (it.productId && !(Number(it.qty) > 0))
         return `${src.label}: quantity must be at least 1 for each product.`;
