@@ -4,6 +4,38 @@
 details in one place, know which modems are ours (FTU), sold or the customer's
 own, and see who has not recharged for 1–2 months so the modem can be collected.
 
+## Status (updated 2026-10-29)
+Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is 4 of 7 steps done.**
+
+| # | Step | Status |
+|---|---|---|
+| 1 | Migration + `schema.sql` | ✅ Done, tested on Postgres 16 (also fixed the `expenses` ordering bug in `schema.sql`) |
+| 2 | Services + `utils/ftu.js` | ✅ Done, 31 service checks + 8 helper checks passed against a real DB |
+| 3 | Customers + Customer details pages, connection form, Recharged | ✅ Done, checked in a browser against a real DB |
+| 4 | Import from sheet | ✅ Done, wizard tested in a browser with a synthetic sheet; real sheet dry-run (102 rows) clean |
+| 5 | Modems page (collect list, notice, returned / lost) | ⏳ Next |
+| 6 | Dashboard card, Settings (thresholds, Providers) | ⬜ Not started (service for thresholds exists, no screen yet) |
+| 7 | Income → New Internet redesign | ⬜ Not started |
+| 8 | Stock ↔ modems sync | ⬜ Phase 2 |
+| 9 | Faulty-modem flow + costs | ⬜ Phase 2 |
+
+**Before using it for real**
+- [ ] Run `supabase/migrations/2026-10-29_customers_connections_modems.sql` by hand in the
+  Supabase SQL Editor (the app does not run migrations).
+- [ ] Import the BSNL FTTH sheet (Customers → Import, admin), then set each
+  customer's modem (FTU / Own) and last recharge date by hand.
+- [ ] Merge the branch (or open a PR).
+
+**What works today:** customers, connections per provider (BSNL / TIC forms with
+default password and "+ Add field"), per-line status, Recharged date, masked
+password / Aadhaar with Show + Copy, modem FTU / Own / None with MAC + serial,
+collect reminders on the customer pages (30 / 60 days defaults), bulk Set modem /
+status, return prompt when an FTU line goes inactive / disconnected, sheet import.
+
+**Known gaps:** no Modems page or Collect list yet; no screen to change the 30 / 60
+day thresholds or manage providers' fields; New Internet income form not yet
+connected to customers; modems are not yet linked to stock purchases.
+
 ## Decisions
 | Topic | Decision |
 |---|---|
@@ -277,7 +309,7 @@ sent · Returned / Lost.
 2. Services: customers, providers, connections, modems, settings (+ `utils/ftu.js`) — **done**
 3. Customers + Customer details pages: dynamic provider form, CRUD, **Recharged** — **done**
 4. **Import your BSNL FTTH sheet** (§5), so real data is in early — **done**
-5. Modems page: badges, bulk Set modem, collect list, notice, returned / lost
+5. Modems page: badges, bulk Set modem, collect list, notice, returned / lost — *badges and bulk Set modem are already on the Customers page; the Modems page and collect list are next*
 6. Dashboard card, Settings (thresholds, then Providers management)
 7. Income → New Internet redesign (§3)
 
@@ -286,5 +318,8 @@ sent · Returned / Lost.
 9. Faulty-modem flow with parcel / service / upgrade costs and "With service" (§6)
 
 ## 10. Open questions
-None remaining. All questions are answered and recorded in the Decisions table.
-Next step: Phase 1, step 1 (migration).
+- Passwords / Aadhaar are visible to everyone approved but masked until **Show** is
+  clicked. Show them directly without the click?
+
+Everything else is answered and recorded in the Decisions table.
+Next step: Phase 1, step 5 (Modems page).
