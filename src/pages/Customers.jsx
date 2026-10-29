@@ -14,7 +14,9 @@ import { bulkSetConnectionStatus } from "../services/connectionsService";
 import { bulkSetLineModem } from "../services/modemsService";
 import { reminderFor } from "../utils/ftu";
 import { formatDate } from "../utils/format";
-import { CONNECTION_STATUS_LABELS } from "../constants";
+import { CONNECTION_STATUS_LABELS, ROLES } from "../constants";
+import { useAuth } from "../context/AuthContext";
+import ImportModal from "../components/customers/ImportModal";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -27,6 +29,9 @@ const fetchAll = () =>
 
 export default function Customers() {
   const navigate = useNavigate();
+  const { role } = useAuth();
+  const isAdmin = role === ROLES.ADMIN;
+  const [importOpen, setImportOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [providers, setProviders] = useState([]);
   const [settings, setSettings] = useState({ dueDays: 30, collectDays: 60 });
@@ -178,15 +183,22 @@ export default function Customers() {
         title="Customers"
         subtitle="Internet customers, their connections and modems"
         action={
-          <Button
-            onClick={() => {
-              setForm(emptyCustomerForm);
-              setFormError("");
-              setAddOpen(true);
-            }}
-          >
-            + Add Customer
-          </Button>
+          <div className="flex gap-2">
+            {isAdmin && (
+              <Button variant="secondary" onClick={() => setImportOpen(true)}>
+                Import
+              </Button>
+            )}
+            <Button
+              onClick={() => {
+                setForm(emptyCustomerForm);
+                setFormError("");
+                setAddOpen(true);
+              }}
+            >
+              + Add Customer
+            </Button>
+          </div>
         }
       />
 
@@ -329,6 +341,13 @@ export default function Customers() {
           </div>
         </form>
       </Modal>
+
+      <ImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        providers={providers.filter((p) => p.active)}
+        onDone={refresh}
+      />
 
       <ConfirmDialog
         open={!!bulkAsk}

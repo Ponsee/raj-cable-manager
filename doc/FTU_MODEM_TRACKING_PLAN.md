@@ -186,8 +186,10 @@ Cleaning rules for what the sheet contains:
   preview suggests a `plan_amount` where a price is obvious (e.g. 599) for you to
   accept.
 - **Dates:** mixed `m/d/yy` and `m/d/yyyy`, **month first** (preselected; 9 blank).
-- **Duplicates:** 1 repeated user name and 1 repeated landline → flagged
-  "possible duplicate" to keep or skip. Repeated account numbers are normal
+- **Duplicates:** user names are unique in your sheet (the only repeat was the
+  `-` placeholder); **1 repeated landline** is flagged "possible duplicate" to keep
+  or skip. A user name or landline matching an already saved connection is also
+  flagged / skipped. Repeated account numbers are normal
   (several lines per account), **not** duplicates.
 - Landline kept as typed (spaces trimmed); address `-` / `_` → blank.
 
@@ -274,7 +276,7 @@ sent · Returned / Lost.
 1. Migration (tables, BSNL / TIC seed, `income.connection_id`), `schema.sql`, docs — **done**
 2. Services: customers, providers, connections, modems, settings (+ `utils/ftu.js`) — **done**
 3. Customers + Customer details pages: dynamic provider form, CRUD, **Recharged** — **done**
-4. **Import your BSNL FTTH sheet** (§5), so real data is in early
+4. **Import your BSNL FTTH sheet** (§5), so real data is in early — **done**
 5. Modems page: badges, bulk Set modem, collect list, notice, returned / lost
 6. Dashboard card, Settings (thresholds, then Providers management)
 7. Income → New Internet redesign (§3)
