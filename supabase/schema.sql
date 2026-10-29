@@ -28,6 +28,19 @@ create table if not exists profiles (
   created_at timestamptz default now()
 );
 
+-- (expenses is created first because worker_transactions and stock_transactions point to it)
+-- expenses: money going out.
+create table if not exists expenses (
+  id uuid primary key default gen_random_uuid(),
+  amount numeric default 0,
+  category text,
+  note text,
+  payment_method text default 'Cash',   -- Cash | Online | Split
+  cash_amount numeric,                   -- when Split: the cash part
+  online_amount numeric,                 -- when Split: the online part
+  created_at timestamptz default now()
+);
+
 -- workers: salary workers and contract workers.
 create table if not exists workers (
   id uuid primary key default gen_random_uuid(),
@@ -113,19 +126,6 @@ create table if not exists income (
   stock_tx_id uuid references stock_transactions (id) on delete set null, -- links a product sale to its stock movement
   created_at timestamptz default now()
 );
-
--- expenses: money going out.
-create table if not exists expenses (
-  id uuid primary key default gen_random_uuid(),
-  amount numeric default 0,
-  category text,
-  note text,
-  payment_method text default 'Cash',   -- Cash | Online | Split
-  cash_amount numeric,                   -- when Split: the cash part
-  online_amount numeric,                 -- when Split: the online part
-  created_at timestamptz default now()
-);
-
 
 -- ---------------------------------------------------------------------
 -- 2. INDEXES (make history lookups fast)
