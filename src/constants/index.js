@@ -199,6 +199,30 @@ export const INCOME_SOURCES = [
 // Starting list for the recharge provider dropdown (users can add more).
 export const INTERNET_PROVIDERS = ["BSNL", "TIC Fiber"];
 
+// ---- Customers / connections / modems (FTU tracking) ----
+// Status is tracked per connection (provider line), not per customer.
+export const CONNECTION_STATUS = {
+  ACTIVE: "active",
+  INACTIVE: "inactive",
+  DISCONNECTED: "disconnected",
+};
+export const CONNECTION_STATUS_LABELS = {
+  active: "Active",
+  inactive: "Inactive",
+  disconnected: "Disconnected",
+};
+// ftu = ours (collect if the line stops recharging), customer = their own / bought.
+export const MODEM_OWNERSHIP = { FTU: "ftu", CUSTOMER: "customer" };
+export const MODEM_STATUS = {
+  IN_STOCK: "in_stock",
+  WITH_CUSTOMER: "with_customer",
+  WITH_SERVICE: "with_service",
+  LOST: "lost",
+};
+// Reminder thresholds (days since last recharge); overridden by app_settings.
+export const FTU_DEFAULT_DUE_DAYS = 30;
+export const FTU_DEFAULT_COLLECT_DAYS = 60;
+
 // ---- ID Recharge (expense) ----
 // Money paid to the MSO / provider to recharge a subscriber ID. The expense is
 // booked under this category; the chosen ID and the month it's FOR are kept in

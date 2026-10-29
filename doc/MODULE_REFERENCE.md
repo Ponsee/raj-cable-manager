@@ -700,6 +700,8 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 | `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
 | `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / **Last 6 months** / This year / **Last year** / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()`, `lastMonthsRange(n)` |
 | `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals), **payment filter chips + "Paid via" column** (config `paymentFilter`) |
+| `services/customersService.js`, `providersService.js`, `connectionsService.js`, `modemsService.js`, `settingsService.js`, `dbErrors.js` | FTU tracking data layer (no UI yet): customers → lines → modems, provider field lists (+ "Add field"), per-line status / **Recharged**, modem FTU / Own / None, returned / lost, FTU thresholds; `dbErrors` turns DB errors into plain messages |
+| `utils/ftu.js` | Pure helpers: MAC normalising, customer matching (phone + name), derived customer status, modem badge, collect-modem reminder level, provider-field ↔ connection mapping |
 | `components/finance/CategoryDetailsModal.jsx` | Expense "By category" drill-down (purchases by vendor, worker pay by worker, plain entries) |
 | `components/finance/SourceDetailsModal.jsx` | Income "By source" drill-down (sales by product, other rows by note) |
 | `components/finance/IncomeExpenseChart.jsx` | Shared income-vs-expense bar chart (Dashboard) |
