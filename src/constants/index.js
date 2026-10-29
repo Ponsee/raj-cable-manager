@@ -249,6 +249,7 @@ export const EXPENSE_CATEGORIES = [
 // ---- Sidebar navigation (grouped by section) ----
 export const NAV_ITEMS = [
   { label: "Dashboard", path: "/dashboard", icon: "📊", group: "Main" },
+  { label: "Customers", path: "/customers", icon: "🧑‍💼", group: "Main" },
 
   { label: "Income", path: "/income", icon: "🟢", group: "Finance" },
   { label: "Expense", path: "/expense", icon: "🔴", group: "Finance" },

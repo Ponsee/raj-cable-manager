@@ -16,10 +16,10 @@ const clean = (v) => {
 
 // Add the derived bits the UI needs: customer status + a modem badge per line.
 function decorate(c) {
-  const connections = (c.connections || []).map((conn) => ({
-    ...conn,
-    badge: modemBadge(conn.modems),
-  }));
+  // Oldest line first, so the order doesn't jump around after an edit.
+  const connections = [...(c.connections || [])]
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+    .map((conn) => ({ ...conn, badge: modemBadge(conn.modems) }));
   return { ...c, connections, status: deriveCustomerStatus(connections) };
 }
 

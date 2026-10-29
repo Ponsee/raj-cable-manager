@@ -273,7 +273,7 @@ sent · Returned / Lost.
 **Phase 1: customers and FTU reminders (no stock coupling)**
 1. Migration (tables, BSNL / TIC seed, `income.connection_id`), `schema.sql`, docs — **done**
 2. Services: customers, providers, connections, modems, settings (+ `utils/ftu.js`) — **done**
-3. Customers + Customer details pages: dynamic provider form, CRUD, **Recharged**
+3. Customers + Customer details pages: dynamic provider form, CRUD, **Recharged** — **done**
 4. **Import your BSNL FTTH sheet** (§5), so real data is in early
 5. Modems page: badges, bulk Set modem, collect list, notice, returned / lost
 6. Dashboard card, Settings (thresholds, then Providers management)
