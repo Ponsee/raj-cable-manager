@@ -26,7 +26,7 @@ own, and see who has not recharged for 1–2 months so the modem can be collecte
 payments), income isn't linked to a customer, and stock is only a count, so
 individual modems (serial / MAC) aren't tracked.
 
-## 1. Tables (4 new + 1 column)
+## 1. Tables (5 new + 1 column) — migration written, see `supabase/migrations/2026-10-29_customers_connections_modems.sql`
 
 **`customers`**: `id`, `name`, `phone`, `alt_phone`, `email`, `address`, `notes`.
 Phone is **not unique** (your sheet has one mobile on different organisations).
@@ -61,7 +61,8 @@ TIC; BSNL's Password field has `default: "password"`.
 **`income`**: nullable `connection_id` (customer found through it) for New
 Internet entries. The Internet Recharge income source is unchanged.
 
-**Settings**: `ftu_due_days` (30), `ftu_collect_days` (60).
+**`app_settings`** (`key`, `value` jsonb): `ftu_due_days` = 30, `ftu_collect_days` = 60
+(the app had no settings store). Read by all, changed by admin only.
 **Indexes:** `connections(customer_id)`, `connections(last_recharge_on)`,
 `modems(connection_id)`, `modems(status, product_id)`, `income(connection_id)`.
 Update `supabase/schema.sql`; RLS like the existing tables.

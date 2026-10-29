@@ -66,6 +66,7 @@ config) needed for them to work.
 | `2026-06-27_payment_method_expense_worker.sql` | `expenses.payment_method` + `worker_transactions.payment_method` (Cash/Online) |
 | `2026-06-27_split_payment.sql` | `expenses.cash_amount` + `online_amount` (the breakdown for a **Split** payment) |
 | `2026-06-27_pending_payments.sql` | `pending_payments` table (customer credit) incl. `category` column + RLS |
+| `2026-10-29_customers_connections_modems.sql` | **FTU tracking (phase 1):** `customers`, `providers` (BSNL / TIC seed with their form fields), `connections` (per-line status + last recharge), `modems` (serial / MAC, one per line), `app_settings` (FTU thresholds), `income.connection_id` + RLS. No UI yet. |
 
 **Storage:** the `product-images` bucket is created by the migration above
 (running `2026-05-30_product_images_bucket.sql` in the SQL Editor). You can also
