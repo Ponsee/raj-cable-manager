@@ -5,7 +5,7 @@ details in one place, know which modems are ours (FTU), sold or the customer's
 own, and see who has not recharged for 1–2 months so the modem can be collected.
 
 ## Status (updated 2026-10-29)
-Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is 5 of 7 steps done.**
+Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is 6 of 7 steps done.**
 
 | # | Step | Status |
 |---|---|---|
@@ -14,8 +14,8 @@ Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is 5 of 7
 | 3 | Customers + Customer details pages, connection form, Recharged | ✅ Done, checked in a browser against a real DB |
 | 4 | Import from sheet | ✅ Done, wizard tested in a browser with a synthetic sheet; real sheet dry-run (102 rows) clean |
 | 5 | Modems page (collect list, notice, returned / lost) | ✅ Done, checked in a browser against a real DB |
-| 6 | Dashboard card, Settings (thresholds, Providers) | ⏳ Next (service for thresholds exists, no screen yet) |
-| 7 | Income → New Internet redesign | ⬜ Not started |
+| 6 | Dashboard card, Settings (thresholds, Providers) | ✅ Done, checked in a browser against a real DB |
+| 7 | Income → New Internet redesign | ⏳ Next |
 | 8 | Stock ↔ modems sync | ⬜ Phase 2 |
 | 9 | Faulty-modem flow + costs | ⬜ Phase 2 |
 
@@ -36,8 +36,7 @@ unit to a line, **Notice** with prefilled WhatsApp / SMS, **Returned**, **Lost**
 optional charge to Pending, **+ Add modem**, Delete), bulk Set modem /
 status, return prompt when an FTU line goes inactive / disconnected, sheet import.
 
-**Known gaps:** no screen to change the 30 / 60 day thresholds or manage providers'
-fields; no dashboard card; "With service" units have no swap / service workflow yet
+**Known gaps:** "With service" units have no swap / service workflow yet
 (phase 2); New Internet income form not yet
 connected to customers; modems are not yet linked to stock purchases.
 
@@ -315,7 +314,7 @@ sent · Returned / Lost.
 3. Customers + Customer details pages: dynamic provider form, CRUD, **Recharged** — **done**
 4. **Import your BSNL FTTH sheet** (§5), so real data is in early — **done**
 5. Modems page: badges, bulk Set modem, collect list, notice, returned / lost — **done**
-6. Dashboard card, Settings (thresholds, then Providers management)
+6. Dashboard card, Settings (thresholds, then Providers management) — **done**
 7. Income → New Internet redesign (§3)
 
 **Phase 2: stock and faulty flow**
@@ -327,4 +326,4 @@ sent · Returned / Lost.
   clicked. Show them directly without the click?
 
 Everything else is answered and recorded in the Decisions table.
-Next step: Phase 1, step 6 (dashboard card, Settings).
+Next step: Phase 1, step 7 (Income → New Internet redesign).

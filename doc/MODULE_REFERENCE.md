@@ -661,7 +661,9 @@ top-up, suggested, est. cost; Low items flagged). Nav: **🧮 Buy Plan** (adminO
 The old **Reports** page was merged here and removed. The Dashboard is now the
 single analytics page, driven by a header **DateRangePicker** + **Export Excel**:
 - Greeting uses the user's **profile name**.
-- **KPI cards** (clickable → relevant page): Today's income · Income/Expense
+- **KPI cards** (clickable → relevant page): **FTU modems out** (count of free-to-use modems
+  with customers + "Collect N · Due soon M"; red when something needs collecting; opens the
+  Modems page already filtered; hidden when none are out) · Today's income · Income/Expense
   (range) · Net profit · Cash · Online · Low-stock · Stock value · **Worker balance
   due** *(admin)* · **Pending approvals** *(admin, when >0)*.
 - **Charts:** Income vs Expense per day (shared `IncomeExpenseChart`), **Income by
@@ -684,6 +686,16 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 - **My profile** — edit name + mobile (updates `profiles`); read-only email/role/status.
 - **Change password** — `supabase.auth.updateUser({ password })`.
 - **Account** — sign out; admins get a link to Users.
+- **FTU modem reminders** (admin) — the two day thresholds (default **30** "Due soon" /
+  **60** "Collect modem"; due must be less than collect). Stored in `app_settings`; used by
+  the Customers, Modems and Dashboard pages.
+- **Internet providers & their fields** (admin, `components/settings/ProvidersCard.jsx`) —
+  rename a provider, mark it inactive, add a provider (starts with user name / password /
+  plan name), and edit each provider's connection-form fields: name, type (text / number /
+  date / secret), required, default value (BSNL password = `password`), reorder, delete.
+  User name / password / plan name can't be removed or retyped. Existing field keys never
+  change, so values already saved on connections are kept (shown as "this connection" if
+  the field is later deleted).
 - **About** — app name + version.
 
 ---

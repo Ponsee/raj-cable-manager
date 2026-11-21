@@ -5,6 +5,8 @@ import Button from "../components/ui/Button";
 import { supabase } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { ROLE_LABELS, USER_STATUS_LABELS, ROLES } from "../constants";
+import FtuSettingsCard from "../components/settings/FtuSettingsCard";
+import ProvidersCard from "../components/settings/ProvidersCard";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -184,6 +186,14 @@ export default function Settings() {
             </div>
           </form>
         </Card>
+
+        {/* FTU tracking (admin) */}
+        {isAdmin && <FtuSettingsCard />}
+        {isAdmin && (
+          <div className="lg:col-span-2">
+            <ProvidersCard />
+          </div>
+        )}
 
         {/* Account */}
         <Card title="Account">

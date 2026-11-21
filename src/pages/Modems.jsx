@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import PageHeader from "../components/ui/PageHeader";
 import Button from "../components/ui/Button";
 import StatCard from "../components/ui/StatCard";
@@ -35,12 +35,14 @@ const fetchAll = () => Promise.all([getModems(), getFtuSettings()]);
 export default function Modems() {
   const { role } = useAuth();
   const isAdmin = role === ROLES.ADMIN;
+  const location = useLocation();
   const [modems, setModems] = useState([]);
   const [settings, setSettings] = useState({ dueDays: 30, collectDays: 60 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [view, setView] = useState("all");
+  // The dashboard card opens this page already filtered (e.g. "collect").
+  const [view, setView] = useState(VIEWS[location.state?.view] ? location.state.view : "all");
   const [ownership, setOwnership] = useState("all");
   const [search, setSearch] = useState("");
 
