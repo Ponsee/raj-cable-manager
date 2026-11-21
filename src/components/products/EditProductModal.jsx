@@ -39,6 +39,7 @@ export default function EditProductModal({ open, onClose, product, onSaved }) {
         unit: product.unit || "",
         selling_price: product.selling_price ?? "",
         minimum_stock: product.minimum_stock ?? "",
+        track_units: !!product.track_units,
       });
       // Prefer the full list; fall back to the single image_url for old rows.
       const urls =
@@ -77,6 +78,10 @@ export default function EditProductModal({ open, onClose, product, onSaved }) {
         minimum_stock: Number(form.minimum_stock) || 0,
         image_url: allUrls[0] || null,
         image_urls: allUrls,
+        // Only sent when the column exists (migration run) and the setting changed.
+        ...(product.track_units !== undefined && !!form.track_units !== !!product.track_units
+          ? { track_units: !!form.track_units }
+          : {}),
       });
       await onSaved();
     } catch (err) {

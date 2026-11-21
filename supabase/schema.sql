@@ -85,6 +85,7 @@ create table if not exists products (
   selling_price numeric,                -- price sold to customers (pre-fills Sales)
   minimum_stock numeric default 0,
   current_stock numeric default 0,      -- legacy; stock is computed from transactions
+  track_units boolean not null default false, -- keep a modem record per unit (serial / MAC)
   created_at timestamptz default now()
 );
 
@@ -429,7 +430,7 @@ create table if not exists modems (
   ownership text not null default 'ftu'
     check (ownership in ('ftu', 'customer')),
   status text not null default 'in_stock'
-    check (status in ('in_stock', 'with_customer', 'with_service', 'lost')),
+    check (status in ('in_stock', 'with_customer', 'with_service', 'lost', 'out')),
   -- The line it serves. RESTRICT: a connection (or its customer) can't be deleted
   -- while a modem is still on it.
   connection_id uuid references connections (id) on delete restrict,
@@ -437,6 +438,7 @@ create table if not exists modems (
   notice_sent_on date,
   replaced_modem_id uuid references modems (id) on delete set null,
   purchase_tx_id uuid references stock_transactions (id) on delete set null,
+  out_tx_id uuid references stock_transactions (id) on delete set null,  -- the sale / usage that took it out of stock
   service jsonb,                        -- faulty-unit details (brand, claim, parcel / service / upgrade costs ...)
   created_at timestamptz default now(),
   check (status <> 'with_customer' or connection_id is not null)
@@ -448,6 +450,8 @@ create unique index if not exists uq_modems_one_per_line
   on modems (connection_id) where status = 'with_customer';
 create index if not exists idx_modems_connection on modems (connection_id);
 create index if not exists idx_modems_status_product on modems (status, product_id);
+create index if not exists idx_modems_out_tx on modems (out_tx_id);
+create index if not exists idx_modems_purchase_tx on modems (purchase_tx_id);
 
 -- ---------------------------------------------------------------------
 -- income: tie a New Internet entry to its line (customer found through it).

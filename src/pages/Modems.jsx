@@ -5,8 +5,9 @@ import Button from "../components/ui/Button";
 import StatCard from "../components/ui/StatCard";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { StatusChip, ReminderChip, CopyButton } from "../components/customers/Chips";
-import { AddModemModal, IssueModal, NoticeModal, LostModal } from "../components/customers/ModemModals";
-import { getModems, markReturned, deleteModem } from "../services/modemsService";
+import { AddModemModal, IssueModal, NoticeModal, LostModal, EditModemModal } from "../components/customers/ModemModals";
+import { getModems, deleteModem } from "../services/modemsService";
+import { returnUnitToStock } from "../services/modemFlowService";
 import { getFtuSettings } from "../services/settingsService";
 import { reminderFor } from "../utils/ftu";
 import { formatDate } from "../utils/format";
@@ -24,6 +25,7 @@ const VIEWS = {
   collect: "Collect now",
   notset: "Recharge date not set",
   with_service: "With service",
+  out: "Sold / used",
   lost: "Lost",
 };
 
@@ -50,6 +52,7 @@ export default function Modems() {
   const [issue, setIssue] = useState(null);
   const [notice, setNotice] = useState(null);
   const [lost, setLost] = useState(null);
+  const [edit, setEdit] = useState(null);
   const [returnAsk, setReturnAsk] = useState(null);
   const [delAsk, setDelAsk] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -93,6 +96,7 @@ export default function Modems() {
       case "in_stock": return r.status === "in_stock";
       case "with_customer": return r.status === "with_customer";
       case "with_service": return r.status === "with_service";
+      case "out": return r.status === "out";
       case "lost": return r.status === "lost";
       case "due": return level(r) === "due";
       case "collect": return level(r) === "collect" || level(r) === "collect_now";
@@ -242,7 +246,8 @@ export default function Modems() {
                           {r.status === "in_stock" && (
                             <>
                               <Button onClick={() => setIssue(r)}>Issue</Button>
-                              {isAdmin && <Button variant="secondary" onClick={() => { setAskError(""); setDelAsk(r); }}>Delete</Button>}
+                              {/* Units that belong to a stock product are removed via "Report loss" so stock stays right */}
+                              {isAdmin && !r.product_id && <Button variant="secondary" onClick={() => { setAskError(""); setDelAsk(r); }}>Delete</Button>}
                             </>
                           )}
                           {r.status === "with_customer" && ftu && (
@@ -253,6 +258,9 @@ export default function Modems() {
                           )}
                           {(r.status === "with_customer" || r.status === "with_service") && (
                             <Button variant="secondary" onClick={() => setLost(r)}>Lost</Button>
+                          )}
+                          {r.status !== "lost" && (
+                            <Button variant="secondary" onClick={() => setEdit(r)}>Edit</Button>
                           )}
                         </div>
                       </td>
@@ -269,11 +277,12 @@ export default function Modems() {
       <IssueModal open={!!issue} onClose={() => setIssue(null)} modem={issue} onSaved={refresh} />
       <NoticeModal open={!!notice} onClose={() => setNotice(null)} modem={notice} onSaved={refresh} />
       <LostModal open={!!lost} onClose={() => setLost(null)} modem={lost} onSaved={refresh} />
+      <EditModemModal open={!!edit} onClose={() => setEdit(null)} modem={edit} onSaved={refresh} />
 
       <ConfirmDialog
         open={!!returnAsk}
         onClose={() => setReturnAsk(null)}
-        onConfirm={() => run(() => markReturned(returnAsk.id), () => setReturnAsk(null))}
+        onConfirm={() => run(() => returnUnitToStock(returnAsk), () => setReturnAsk(null))}
         loading={busy}
         error={askError}
         title="Modem collected?"

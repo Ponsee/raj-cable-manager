@@ -66,6 +66,7 @@ config) needed for them to work.
 | `2026-06-27_payment_method_expense_worker.sql` | `expenses.payment_method` + `worker_transactions.payment_method` (Cash/Online) |
 | `2026-06-27_split_payment.sql` | `expenses.cash_amount` + `online_amount` (the breakdown for a **Split** payment) |
 | `2026-06-27_pending_payments.sql` | `pending_payments` table (customer credit) incl. `category` column + RLS |
+| `2026-11-21_modem_stock_sync.sql` | **Stock ↔ modem units:** `products.track_units`, unit status `out`, `modems.out_tx_id` (+ indexes). Safe to re-run; the app works without it. |
 | `2026-10-29_customers_connections_modems.sql` | **FTU tracking (phase 1):** `customers`, `providers` (BSNL / TIC seed with their form fields), `connections` (per-line status + last recharge), `modems` (serial / MAC, one per line), `app_settings` (FTU thresholds), `income.connection_id` + RLS. No UI yet. |
 
 **Storage:** the `product-images` bucket is created by the migration above
@@ -279,6 +280,31 @@ Both money tables carry **how the money moved**:
   **lostQty**, **lossValue**.
 - `isLowStock(stock, min)`, `pricesByVendor(txs)` (cheapest-first vendor comparison).
 
+### Track each unit (modems) — `products.track_units`
+- Product form checkbox **"Track each unit (serial / MAC)"**. Stock is still calculated
+  from stock entries; for these products every stock action also moves the matching
+  **modem units** (`modems`), so the two agree:
+
+  | Stock action | Units |
+  |---|---|
+  | Purchase / bulk purchase / opening stock of N | N new in-stock units (single Add Stock form shows a **MAC + serial row per unit**, with *Paste a list*; bulk / opening create blank units to fill in on the Modems page) |
+  | Sale / Used in service | a unit goes **out** (the oldest, or the one picked under *Which unit?* for a single piece) |
+  | Loss | a unit becomes **lost** |
+  | Customer return | the last sold unit comes back in stock |
+  | Credit sale (Pending) | a unit goes out |
+  | Delete a sale | its unit is put back in stock |
+  | Delete a purchase | its units are removed; **refused** if any were already issued or sold |
+
+- Products page shows **📶 N units tracked** and a **⚠ N missing — add** button (adds blank
+  units) when stock and units differ (e.g. stock bought before tracking was switched on),
+  or a warning when there are more units than stock. Delete is hidden for units that belong
+  to a stock product (use *Report loss* so stock stays right).
+- Unit statuses: `in_stock`, `with_customer`, `with_service`, `lost`, and **`out`** (sold /
+  used without a tracked connection); `modems.out_tx_id` links a unit to the stock entry
+  that took it out. Needs migration `2026-11-21_modem_stock_sync.sql`; without it nothing
+  changes. Services: `modemStockService.js` (primitives), `modemFlowService.js` (issue /
+  return / add a unit).
+
 ### Stock entry types (`stock_transactions.type`)
 - **Purchase** 🛒 — stock in; creates an **Expense** (with Cash/Online/**Split**);
   per-batch **selling price**; pick a **vendor**.
@@ -416,13 +442,24 @@ badge per type with a per-type filter.
   drive the fields per entry via a `mode`:
   - `simple` (Daily Collection, **Home Collection** 🏠, Cable Collection, Other)
     → just an amount.
-  - `device` (Shop Collection, New Cable HD/SD, New Internet) → **multiple
-    products** (each qty + price), optional **charge** (e.g. install). Priced
-    item → **Sale** (income + stock out); ₹0 item → **Used** (stock out, no income).
-    **New Internet has `productOptional: true`** — the product can be left empty
-    (customer uses their own modem); then the **install charge must be > 0**
-    (nothing else would be recorded). Only the charge is saved as income and
-    stock is untouched. Other device sources still require a product.
+  - `device` (Shop Collection, New Cable HD/SD) → **multiple products** (each qty +
+    price), optional **charge**. Priced item → **Sale** (income + stock out); ₹0
+    item → **Used** (stock out, no income).
+  - `internet` (**New Internet**, `components/finance/NewInternetFields.jsx` +
+    `services/newInternetService.js`) → ONE entry creates the **customer** (pick an
+    existing one or "+ New customer": name + phone required), a **connection** with the
+    chosen provider's fields (BSNL password prefilled), install date, plan amount and
+    install charge (0 allowed, blank not), first recharge date, the **modem** and the
+    **income**. Modem: **FTU (ours)** or **Customer bought** → pick an in-stock unit
+    (shown as product · MAC · serial; bought also takes the selling price) — FTU makes a
+    "usage" stock entry (no income), bought a "sale" (income "New Internet", linked to the
+    stock entry); **Own modem** → optional MAC / serial saved as a customer-owned modem
+    with no stock change (a valid MAC is checked). Income rows (plan, install, modem) are
+    separate, all tagged with the new connection. **Part payment** works: only the paid
+    part is income, the balance goes to Pending, and the modem's sale stock entry carries
+    no income. If any step fails the earlier ones are undone (customer, connection, unit,
+    income) so nothing half-saved is left. Everything ₹0 saves no income row. The same
+    unit can't be picked on two entries of one batch.
   - `provider` (Internet Recharge) → provider (`INTERNET_PROVIDERS`, add-new) + amount.
 - Source order (most-used first): **Cable Collection · Shop Collection · Daily
   Collection** · New Cable · New Internet · Internet Recharge · Other (entry 1

@@ -5,7 +5,7 @@ details in one place, know which modems are ours (FTU), sold or the customer's
 own, and see who has not recharged for 1–2 months so the modem can be collected.
 
 ## Status (updated 2026-10-29)
-Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is 6 of 7 steps done.**
+Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is complete (7 of 7). Phase 2 stock sync is done; the faulty-modem flow (step 9) is next.**
 
 | # | Step | Status |
 |---|---|---|
@@ -15,13 +15,16 @@ Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is 6 of 7
 | 4 | Import from sheet | ✅ Done, wizard tested in a browser with a synthetic sheet; real sheet dry-run (102 rows) clean |
 | 5 | Modems page (collect list, notice, returned / lost) | ✅ Done, checked in a browser against a real DB |
 | 6 | Dashboard card, Settings (thresholds, Providers) | ✅ Done, checked in a browser against a real DB |
-| 7 | Income → New Internet redesign | ⏳ Next |
-| 8 | Stock ↔ modems sync | ⬜ Phase 2 |
-| 9 | Faulty-modem flow + costs | ⬜ Phase 2 |
+| 7 | Income → New Internet redesign | ✅ Done: service tests (10 checks incl. rollbacks) + checked in a browser |
+| 8 | Stock ↔ modems sync | ✅ Done: service tests (23 checks) + checked in a browser |
+| 9 | Faulty-modem flow + costs | ⏳ Next |
 
 **Before using it for real**
-- [ ] Run `supabase/migrations/2026-10-29_customers_connections_modems.sql` by hand in the
-  Supabase SQL Editor (the app does not run migrations).
+- [ ] Run **both** migrations by hand in the Supabase SQL Editor, in this order (the app
+  does not run migrations): `supabase/migrations/2026-10-29_customers_connections_modems.sql`
+  then `supabase/migrations/2026-11-21_modem_stock_sync.sql`.
+- [ ] For modem products, switch on **"Track each unit"** (Products → Edit), then press
+  **⚠ N missing — add** on the Products list so units match your current stock.
 - [ ] Import the BSNL FTTH sheet (Customers → Import, admin), then set each
   customer's modem (FTU / Own) and last recharge date by hand.
 - [ ] Merge the branch (or open a PR).
@@ -36,9 +39,15 @@ unit to a line, **Notice** with prefilled WhatsApp / SMS, **Returned**, **Lost**
 optional charge to Pending, **+ Add modem**, Delete), bulk Set modem /
 status, return prompt when an FTU line goes inactive / disconnected, sheet import.
 
-**Known gaps:** "With service" units have no swap / service workflow yet
-(phase 2); New Internet income form not yet
-connected to customers; modems are not yet linked to stock purchases.
+**Also works now:** the **New Internet** income entry creates customer + connection + modem
++ income in one save (with undo if a step fails); products with **Track each unit** keep a
+modem record per piece (serial / MAC) in step with stock; the Modems page issues and returns
+units with the right stock entries.
+
+**Known gaps:** "With service" units have no swap / service workflow yet (step 9: parcel /
+service / upgrade costs). Bulk purchase and opening stock create blank units (fill MAC /
+serial on the Modems page). The Income "Edit sale" screen doesn't re-sync units if the
+quantity of a tracked sale is changed.
 
 ## Decisions
 | Topic | Decision |
@@ -326,4 +335,4 @@ sent · Returned / Lost.
   clicked. Show them directly without the click?
 
 Everything else is answered and recorded in the Decisions table.
-Next step: Phase 1, step 7 (Income → New Internet redesign).
+Next step: Phase 2, step 9 (faulty-modem flow with parcel / service / upgrade costs).

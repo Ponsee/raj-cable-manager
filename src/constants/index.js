@@ -150,9 +150,9 @@ export const INCOME_CATEGORIES = [
 // ---- Income sources (cable TV / broadband business) ----
 // mode drives which fields the Add-Income form shows:
 //   simple   -> just an amount
-//   device   -> product (reduces stock); optional charge if `charge: true`;
-//               `productOptional: true` lets it be saved without any product
+//   device   -> product (reduces stock); optional charge if `charge: true`
 //   provider -> provider dropdown + amount
+//   internet -> New Internet: customer + provider details + plan / install + modem
 // device notes: a product with price 0 is treated as "free" (stock still drops,
 // no sale income); `variants` adds a HD/SD style toggle; `charge` adds a
 // separate connection/install charge field.
@@ -181,11 +181,8 @@ export const INCOME_SOURCES = [
     key: "new_internet",
     label: "New Internet",
     icon: "🌐",
-    mode: "device",
-    hint: "Pick the modem / ONU (price 0 if free) — optional if the customer uses their own modem",
-    productOptional: true, // no product needed (own modem); then a charge is required
-    charge: true,
-    chargeLabel: "Install charge (₹ — 0 if free)",
+    // Customer + provider details + modem in one entry (see NewInternetFields).
+    mode: "internet",
   },
   {
     key: "internet_recharge",
@@ -218,6 +215,7 @@ export const MODEM_STATUS = {
   WITH_CUSTOMER: "with_customer",
   WITH_SERVICE: "with_service",
   LOST: "lost",
+  OUT: "out", // left stock (sold / used) without a tracked connection
 };
 // Reminder thresholds (days since last recharge); overridden by app_settings.
 export const FTU_DEFAULT_DUE_DAYS = 30;

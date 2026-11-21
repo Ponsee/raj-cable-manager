@@ -16,44 +16,7 @@ import {
   todayISO,
 } from "../../utils/ftu";
 import { CONNECTION_STATUS, CONNECTION_STATUS_LABELS } from "../../constants";
-
-const inputClass =
-  "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
-
-function Field({ label, required, children }) {
-  return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">
-        {label}
-        {required && <span className="text-red-500"> *</span>}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-// Password-style input with a show / hide toggle.
-function SecretInput({ value, onChange }) {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="relative">
-      <input
-        type={show ? "text" : "password"}
-        value={value ?? ""}
-        onChange={onChange}
-        className={inputClass + " pr-14"}
-        autoComplete="off"
-      />
-      <button
-        type="button"
-        onClick={() => setShow((s) => !s)}
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-indigo-600 hover:underline"
-      >
-        {show ? "Hide" : "Show"}
-      </button>
-    </div>
-  );
-}
+import ProviderFieldInputs, { Field, SecretInput, fieldInputClass as inputClass } from "./ProviderFieldInputs";
 
 const pretty = (key) =>
   key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
@@ -222,20 +185,7 @@ function Body({ customerId, connection, providers, onProviderUpdated, onSaved, o
 
       {/* The provider's own fields */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {fields.map((f) => (
-          <Field key={f.key} label={f.label} required={f.required && !editing}>
-            {f.type === "secret" || f.secret ? (
-              <SecretInput value={values[f.key]} onChange={(e) => setValue(f.key, e.target.value)} />
-            ) : (
-              <input
-                type={f.type === "number" || f.type === "date" ? f.type : "text"}
-                value={values[f.key] ?? ""}
-                onChange={(e) => setValue(f.key, e.target.value)}
-                className={inputClass}
-              />
-            )}
-          </Field>
-        ))}
+        <ProviderFieldInputs fields={fields} values={values} onChange={setValue} markRequired={!editing} />
         {extras.map((x) => (
           <Field key={x.key} label={`${x.label} (this connection only)`}>
             <div className="flex gap-2">

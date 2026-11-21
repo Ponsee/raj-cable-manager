@@ -32,6 +32,9 @@ import {
   PAYMENT_SPLIT,
 } from "../constants";
 import { formatCurrency, formatDate } from "../utils/format";
+import { UnitRows, UnitSelect } from "../components/products/UnitFields";
+import { checkUnitRows } from "../utils/unitLabels";
+import { getInStockUnits } from "../services/modemStockService";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -773,12 +776,16 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
   const [cashAmount, setCashAmount] = useState(""); // for Split
   const [onlineAmount, setOnlineAmount] = useState(""); // for Split
   const [vendors, setVendors] = useState([]);
+  const [unitRows, setUnitRows] = useState([]); // tracked products: MAC / serial per unit being added
+  const [inStockUnits, setInStockUnits] = useState([]); // tracked products: units that can be sold / used
+  const [pickedUnit, setPickedUnit] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
       getVendors().then(setVendors).catch(() => {});
+      if (product.track_units) getInStockUnits(product.id).then(setInStockUnits);
       setDate(todayStr());
       setSellingPrice(product.selling_price ?? "");
     }
@@ -801,6 +808,8 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
     setPaymentMethod(PAYMENT_METHODS_SPLIT[0]);
     setCashAmount("");
     setOnlineAmount("");
+    setUnitRows([]);
+    setPickedUnit("");
     setError("");
   };
 
@@ -819,6 +828,13 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
       return setError(
         `Not enough stock. Only ${currentStock} ${product.unit} available.`
       );
+
+    // Tracked products: check the MAC addresses entered for new units.
+    const stockIn = type === STOCK_TYPES.PURCHASE || opening;
+    if (product.track_units && stockIn) {
+      const bad = checkUnitRows(unitRows.slice(0, qty));
+      if (bad) return setError(bad);
+    }
 
     // Split payment (purchase only): Cash + Online must add up to the total.
     let cashAmt = 0;
@@ -879,6 +895,14 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
         paymentMethod: usage || opening ? undefined : paymentMethod,
         cashAmount: cashAmt,
         onlineAmount: onlineAmt,
+        // Tracked modem products: details for new units, or the unit being sold / used.
+        units: !product.track_units
+          ? undefined
+          : stockIn
+            ? { details: unitRows.slice(0, qty) }
+            : qty === 1 && pickedUnit
+              ? { unitIds: [pickedUnit] }
+              : undefined,
       });
       // On a purchase or opening entry, save/refresh the selling price if entered.
       if (
@@ -985,6 +1009,14 @@ function AddStockModal({ open, onClose, product, currentStock, onSaved }) {
             />
           </Field>
         </div>
+
+        {/* Tracked modems: a record per unit (MAC / serial) */}
+        {product.track_units && (isPurchase || isOpening) && (
+          <UnitRows qty={qty} rows={unitRows} onChange={setUnitRows} />
+        )}
+        {product.track_units && !isPurchase && !isOpening && qty === 1 && (
+          <UnitSelect units={inStockUnits} value={pickedUnit} onChange={setPickedUnit} />
+        )}
 
         {/* Stock before → after this entry */}
         <div className="flex items-center justify-between rounded-lg bg-indigo-50 px-3 py-2 text-sm">

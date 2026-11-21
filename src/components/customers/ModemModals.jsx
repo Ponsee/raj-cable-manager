@@ -1,12 +1,8 @@
 import { useEffect, useState } from "react";
 import Modal from "../ui/Modal";
 import Button from "../ui/Button";
-import {
-  createModem,
-  issueModem,
-  markLost,
-  markNoticeSent,
-} from "../../services/modemsService";
+import { markLost, markNoticeSent, updateModem } from "../../services/modemsService";
+import { issueUnit, addModemToStock } from "../../services/modemFlowService";
 import { getCustomers } from "../../services/customersService";
 import { getProducts } from "../../services/productsService";
 import { addPending } from "../../services/pendingService";
@@ -71,10 +67,9 @@ function AddBody({ onClose, onSaved }) {
     if (m === null) return setError("Enter a valid MAC address (e.g. AA:BB:CC:DD:EE:FF).");
     setSaving(true);
     try {
-      await createModem({
-        status: "in_stock",
-        ownership: "ftu",
-        product_id: productId,
+      await addModemToStock({
+        productId,
+        productName: products.find((p) => p.id === productId)?.name,
         serial_no: serial,
         mac_address: m,
       });
@@ -97,6 +92,7 @@ function AddBody({ onClose, onSaved }) {
             <option key={p.id} value={p.id}>
               {p.name}
               {p.subcategory ? ` (${p.subcategory})` : ""}
+              {p.track_units ? " — tracked" : ""}
             </option>
           ))}
         </select>
@@ -110,7 +106,9 @@ function AddBody({ onClose, onSaved }) {
         </Field>
       </div>
       <p className="text-xs text-gray-400">
-        This adds a unit only to this list. It does not change product stock or create an expense.
+        {products.find((p) => p.id === productId)?.track_units
+          ? "This product tracks units: adding one also adds 1 to its stock (no expense is recorded)."
+          : "This adds a unit to this list only. It does not change product stock or create an expense."}
       </p>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -134,6 +132,8 @@ function IssueBody({ modem, onClose, onSaved }) {
   const [q, setQ] = useState("");
   const [connId, setConnId] = useState("");
   const [ownership, setOwnership] = useState("ftu");
+  const [price, setPrice] = useState("");
+  const [payment, setPayment] = useState("Cash");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -149,6 +149,7 @@ function IssueBody({ modem, onClose, onSaved }) {
               .filter((l) => !modemOnLine(l.modems))
               .map((l) => ({
                 id: l.id,
+                customer: c.name,
                 label: `${c.name} · ${l.provider?.name}${l.username ? ` · ${l.username}` : ""}`,
               }))
           )
@@ -161,13 +162,18 @@ function IssueBody({ modem, onClose, onSaved }) {
   }, []);
 
   const shown = (lines || []).filter((l) => l.label.toLowerCase().includes(q.trim().toLowerCase()));
+  const selling = ownership === "customer" && !!modem.product_id; // a sale of a stock item
 
   const save = async (e) => {
     e.preventDefault();
     setSaving(true);
     setError("");
     try {
-      await issueModem(modem.id, connId, ownership);
+      await issueUnit(modem, connId, ownership, {
+        sellPrice: price,
+        paymentMethod: payment,
+        customerName: lines?.find((l) => l.id === connId)?.customer,
+      });
       await onSaved();
       onClose();
     } catch (err) {
@@ -203,6 +209,30 @@ function IssueBody({ modem, onClose, onSaved }) {
           ))}
         </div>
       </Field>
+      {selling && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Selling price (₹, 0 = given free)">
+            <input type="number" min="0" step="any" value={price} onChange={(e) => setPrice(e.target.value)} className={inputClass} placeholder="0" />
+          </Field>
+          <Field label="Paid via">
+            <div className="grid grid-cols-2 gap-2">
+              {["Cash", "Online"].map((m) => (
+                <button key={m} type="button" onClick={() => setPayment(m)}
+                  className={`rounded-lg border px-2 py-2 text-sm font-medium transition ${
+                    payment === m ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  }`}>
+                  {m}
+                </button>
+              ))}
+            </div>
+          </Field>
+        </div>
+      )}
+      {modem.product_id && (
+        <p className="text-xs text-gray-400">
+          Product stock goes down by 1{selling && Number(price) > 0 ? " and the sale is added to Income" : ""}.
+        </p>
+      )}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
         <Button type="submit" loading={saving} disabled={!connId}>{saving ? "Saving..." : "Issue modem"}</Button>
@@ -328,6 +358,60 @@ function LostBody({ modem, onClose, onSaved }) {
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
         <Button type="submit" variant="danger" loading={saving}>{saving ? "Saving..." : "Mark lost"}</Button>
+      </div>
+    </form>
+  );
+}
+
+// ---------- Edit a unit's MAC / serial ----------
+export function EditModemModal({ open, onClose, modem, onSaved }) {
+  return (
+    <Modal open={open} onClose={onClose} title="Edit modem details">
+      {open && modem && <EditBody modem={modem} onClose={onClose} onSaved={onSaved} />}
+    </Modal>
+  );
+}
+
+function EditBody({ modem, onClose, onSaved }) {
+  const [mac, setMac] = useState(modem.mac_address || "");
+  const [serial, setSerial] = useState(modem.serial_no || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async (e) => {
+    e.preventDefault();
+    setError("");
+    const m = normalizeMac(mac);
+    if (m === null) return setError("Enter a valid MAC address (e.g. AA:BB:CC:DD:EE:FF).");
+    setSaving(true);
+    try {
+      await updateModem(modem.id, { mac_address: m, serial_no: serial });
+      await onSaved();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={save} className="space-y-4">
+      <Err error={error} />
+      <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
+        {modem.product?.name || "Modem (no product)"}
+      </p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="MAC address">
+          <input value={mac} onChange={(e) => setMac(e.target.value)} className={inputClass + " font-mono"} placeholder="AA:BB:CC:DD:EE:FF" autoFocus />
+        </Field>
+        <Field label="Serial number">
+          <input value={serial} onChange={(e) => setSerial(e.target.value)} className={inputClass} placeholder="Optional" />
+        </Field>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={saving}>{saving ? "Saving..." : "Save"}</Button>
       </div>
     </form>
   );

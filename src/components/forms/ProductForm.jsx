@@ -21,6 +21,7 @@ export const emptyProductForm = {
   unit: PRODUCT_UNITS[0],
   selling_price: "",
   minimum_stock: "",
+  track_units: false, // keep a record per unit (serial / MAC), e.g. modems
 };
 
 // Shared fields for both "Add product" and "Edit product".
@@ -186,6 +187,22 @@ export default function ProductForm({
           placeholder="Price you sell to customers"
         />
       </div>
+
+      <label className="flex items-start gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={!!form.track_units}
+          onChange={(e) => onChange({ target: { name: "track_units", value: e.target.checked } })}
+        />
+        <span>
+          <span className="font-medium text-gray-700">Track each unit (serial / MAC)</span>
+          <span className="block text-xs text-gray-400">
+            For modems: every piece bought gets its own record, so you can see who has which
+            modem. Stock counts stay the same.
+          </span>
+        </span>
+      </label>
 
       <ProductImages
         urls={imageUrls}
