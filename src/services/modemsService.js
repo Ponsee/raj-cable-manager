@@ -143,3 +143,21 @@ export async function markLost(id) {
     .eq("id", id);
   throwDb(error);
 }
+
+// Give an in-stock unit to a customer's line (FTU = ours, "customer" = sold / their own).
+export async function issueModem(id, connectionId, ownership = MODEM_OWNERSHIP.FTU) {
+  if (!connectionId) throw new Error("Pick the customer's connection.");
+  return updateModem(id, {
+    status: MODEM_STATUS.WITH_CUSTOMER,
+    connection_id: connectionId,
+    ownership,
+    issued_on: todayISO(),
+    notice_sent_on: null,
+  });
+}
+
+// Remove a unit that was added by mistake (admin only, enforced by RLS).
+export async function deleteModem(id) {
+  const { error } = await supabase.from("modems").delete().eq("id", id);
+  throwDb(error);
+}

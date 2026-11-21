@@ -18,6 +18,7 @@ import Expense from "./pages/Expense";
 import Pending from "./pages/Pending";
 import Customers from "./pages/Customers";
 import CustomerDetails from "./pages/CustomerDetails";
+import Modems from "./pages/Modems";
 import Settings from "./pages/Settings";
 
 function App() {
@@ -55,6 +56,7 @@ function App() {
           />
           <Route path="/customers" element={<Customers />} />
           <Route path="/customers/:id" element={<CustomerDetails />} />
+          <Route path="/modems" element={<Modems />} />
           <Route path="/products" element={<Products />} />
           <Route path="/products/:id" element={<ProductDetails />} />
           <Route path="/vendors" element={<Vendors />} />

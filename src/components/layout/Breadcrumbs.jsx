@@ -5,6 +5,7 @@ import { Link, useLocation } from "react-router-dom";
 const LABELS = {
   dashboard: "Dashboard",
   customers: "Customers",
+  modems: "Modems",
   workers: "Workers",
   products: "Products",
   vendors: "Vendors",

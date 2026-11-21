@@ -257,6 +257,7 @@ export const NAV_ITEMS = [
 
   { label: "Products", path: "/products", icon: "📦", group: "Inventory" },
   { label: "Vendors", path: "/vendors", icon: "🏪", group: "Inventory" },
+  { label: "Modems", path: "/modems", icon: "📶", group: "Inventory" },
   { label: "Buy Plan", path: "/purchase-plan", icon: "🧮", adminOnly: true, group: "Inventory" },
 
   { label: "Workers", path: "/workers", icon: "👷", adminOnly: true, group: "Team" },
