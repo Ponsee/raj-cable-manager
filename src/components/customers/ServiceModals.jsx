@@ -130,7 +130,13 @@ function SendBody({ modem, modems, onClose, onSaved }) {
                 <option key={u.id} value={u.id}>{unitOptionLabel(u)}</option>
               ))}
             </select>
-            {units.length === 0 && <p className="text-xs text-amber-700">No modems are in stock right now.</p>}
+            {units.length === 0 && (
+              <p className="text-xs text-amber-700">
+                No modem units are marked "In stock". This list shows only units on the Modems page, not the product's stock
+                quantity. On Products, tick "Track each unit" for the modem product and press "missing — add", or use Add modem.
+                You can also untick the box above and send it without a temporary modem.
+              </p>
+            )}
           </>
         )}
       </div>
