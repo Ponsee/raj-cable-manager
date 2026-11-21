@@ -4,7 +4,7 @@
 import { supabase } from "./supabase";
 import { throwDb } from "./dbErrors";
 import { addStockTransaction } from "./productsService";
-import { getTrackedIds, takeUnitsOut } from "./modemStockService";
+import { getTrackedIds, takeUnitsOut, revertOutByTx } from "./modemStockService";
 import { issueModem, markReturned, createModem } from "./modemsService";
 import { STOCK_TYPES, MODEM_OWNERSHIP, MODEM_STATUS } from "../constants";
 import { todayISO } from "../utils/ftu";
@@ -75,6 +75,21 @@ export async function issueUnit(modem, connectionId, ownership, options = {}) {
     units: unitOpts,
     connectionId,
   });
+}
+
+// Undo issueUnit(): put the unit back in stock and drop the stock entry (and the sale
+// income, if there was one) it made.
+export async function undoIssueUnit(unit, result) {
+  if (result?.type) {
+    await revertOutByTx(result.id);
+    await supabase.from("income").delete().eq("stock_tx_id", result.id);
+    await supabase.from("stock_transactions").delete().eq("id", result.id);
+  } else {
+    await supabase
+      .from("modems")
+      .update({ status: MODEM_STATUS.IN_STOCK, connection_id: null, issued_on: null })
+      .eq("id", unit.id);
+  }
 }
 
 // An FTU modem was collected: back to stock (+1 for tracked products).

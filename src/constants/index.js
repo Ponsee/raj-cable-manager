@@ -217,6 +217,20 @@ export const MODEM_STATUS = {
   LOST: "lost",
   OUT: "out", // left stock (sold / used) without a tracked connection
 };
+// Faulty-modem service: money goes to these locked categories (created from the
+// service screens, so they aren't offered in the manual expense form).
+export const SERVICE_CATEGORY = {
+  PARCEL: "Modem Parcel", // courier to / from the brand (expense)
+  SERVICE: "Modem Service", // repair cost (expense)
+  UPGRADE: "Modem Upgrade", // what we pay the brand for a new model (expense)
+  SALE: "Modem Sale", // what the customer pays us (income)
+};
+export const SERVICE_OUTCOME = {
+  WARRANTY_REPLACED: "warranty_replaced",
+  REPAIRED: "repaired",
+  UPGRADE: "upgrade",
+  KEEP_FTU: "keep_ftu",
+};
 // Reminder thresholds (days since last recharge); overridden by app_settings.
 export const FTU_DEFAULT_DUE_DAYS = 30;
 export const FTU_DEFAULT_COLLECT_DAYS = 60;

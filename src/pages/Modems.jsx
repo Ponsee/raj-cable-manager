@@ -8,8 +8,10 @@ import { StatusChip, ReminderChip, CopyButton } from "../components/customers/Ch
 import { AddModemModal, IssueModal, NoticeModal, LostModal, EditModemModal } from "../components/customers/ModemModals";
 import { getModems, deleteModem } from "../services/modemsService";
 import { returnUnitToStock } from "../services/modemFlowService";
+import { SendToServiceModal, ServiceResultModal, ServiceDetailsModal } from "../components/customers/ServiceModals";
+import { SERVICE_OUTCOME_LABELS } from "../utils/modemService";
 import { getFtuSettings } from "../services/settingsService";
-import { reminderFor } from "../utils/ftu";
+import { reminderFor, daysSince } from "../utils/ftu";
 import { formatDate } from "../utils/format";
 import { useAuth } from "../context/AuthContext";
 import { ROLES } from "../constants";
@@ -53,6 +55,9 @@ export default function Modems() {
   const [notice, setNotice] = useState(null);
   const [lost, setLost] = useState(null);
   const [edit, setEdit] = useState(null);
+  const [sendModem, setSendModem] = useState(null); // faulty -> send to service
+  const [resultModem, setResultModem] = useState(null); // the brand answered
+  const [detailsModem, setDetailsModem] = useState(null);
   const [returnAsk, setReturnAsk] = useState(null);
   const [delAsk, setDelAsk] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -214,10 +219,30 @@ export default function Modems() {
                           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
                             {VIEWS[r.status] || r.status}
                           </span>
+                          {r.service?.outcome && (
+                            <span className="rounded-full bg-orange-100 px-2 py-0.5 text-orange-700">
+                              {SERVICE_OUTCOME_LABELS[r.service.outcome]}
+                            </span>
+                          )}
                         </p>
                       </td>
                       <td className="px-4 py-3">
-                        {cust ? (
+                        {r.status === "with_service" && r.service ? (
+                          <>
+                            {r.service.for_customer_id ? (
+                              <Link to={`/customers/${r.service.for_customer_id}`} className="font-medium text-indigo-700 hover:underline">
+                                {r.service.customer_name}
+                              </Link>
+                            ) : (
+                              <span className="font-medium">{r.service.customer_name}</span>
+                            )}
+                            <p className="text-xs text-gray-500">{r.service.provider_name}</p>
+                            <p className="mt-1 text-xs text-orange-700">
+                              With {r.service.brand}
+                              {r.service.claim_no ? ` · claim ${r.service.claim_no}` : ""} · {daysSince(r.service.sent_on)} days
+                            </p>
+                          </>
+                        ) : cust ? (
                           <>
                             <Link to={`/customers/${cust.id}`} className="font-medium text-indigo-700 hover:underline">{cust.name}</Link>
                             <p className="text-xs text-gray-500">{cust.phone || "No phone"}</p>
@@ -256,6 +281,15 @@ export default function Modems() {
                               <Button onClick={() => { setAskError(""); setReturnAsk(r); }}>Returned</Button>
                             </>
                           )}
+                          {r.status === "with_customer" && (
+                            <Button variant="secondary" onClick={() => setSendModem(r)}>Faulty</Button>
+                          )}
+                          {r.status === "with_service" && !r.service?.outcome && (
+                            <Button onClick={() => setResultModem(r)}>Result</Button>
+                          )}
+                          {r.service && r.status !== "in_stock" && (
+                            <Button variant="secondary" onClick={() => setDetailsModem(r)}>Details</Button>
+                          )}
                           {(r.status === "with_customer" || r.status === "with_service") && (
                             <Button variant="secondary" onClick={() => setLost(r)}>Lost</Button>
                           )}
@@ -277,6 +311,9 @@ export default function Modems() {
       <IssueModal open={!!issue} onClose={() => setIssue(null)} modem={issue} onSaved={refresh} />
       <NoticeModal open={!!notice} onClose={() => setNotice(null)} modem={notice} onSaved={refresh} />
       <LostModal open={!!lost} onClose={() => setLost(null)} modem={lost} onSaved={refresh} />
+      <SendToServiceModal open={!!sendModem} onClose={() => setSendModem(null)} modem={sendModem} modems={modems} onSaved={refresh} />
+      <ServiceResultModal open={!!resultModem} onClose={() => setResultModem(null)} modem={resultModem} modems={modems} onSaved={refresh} />
+      <ServiceDetailsModal open={!!detailsModem} onClose={() => setDetailsModem(null)} modem={detailsModem} isAdmin={isAdmin} onSaved={refresh} />
       <EditModemModal open={!!edit} onClose={() => setEdit(null)} modem={edit} onSaved={refresh} />
 
       <ConfirmDialog

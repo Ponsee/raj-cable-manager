@@ -40,6 +40,8 @@ export async function createModem(modem) {
     ownership: modem.ownership || MODEM_OWNERSHIP.FTU,
     status: modem.status || MODEM_STATUS.IN_STOCK,
     connection_id: blank(modem.connection_id),
+    ...(modem.issued_on ? { issued_on: modem.issued_on } : {}),
+    ...(modem.replaced_modem_id ? { replaced_modem_id: modem.replaced_modem_id } : {}),
     ...identity(modem),
   };
   const { data, error } = await supabase.from("modems").insert([row]).select().single();

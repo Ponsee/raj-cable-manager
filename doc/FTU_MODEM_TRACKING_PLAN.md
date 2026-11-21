@@ -5,7 +5,7 @@ details in one place, know which modems are ours (FTU), sold or the customer's
 own, and see who has not recharged for 1–2 months so the modem can be collected.
 
 ## Status (updated 2026-10-29)
-Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is complete (7 of 7). Phase 2 stock sync is done; the faulty-modem flow (step 9) is next.**
+Branch: `feature/ftu-customers-phase1` (pushed, not merged). **All 9 steps are done: Phase 1 (7 of 7) and Phase 2 (stock sync and the faulty-modem flow).**
 
 | # | Step | Status |
 |---|---|---|
@@ -17,7 +17,7 @@ Branch: `feature/ftu-customers-phase1` (pushed, not merged). **Phase 1 is comple
 | 6 | Dashboard card, Settings (thresholds, Providers) | ✅ Done, checked in a browser against a real DB |
 | 7 | Income → New Internet redesign | ✅ Done: service tests (10 checks incl. rollbacks) + checked in a browser |
 | 8 | Stock ↔ modems sync | ✅ Done: service tests (23 checks) + checked in a browser |
-| 9 | Faulty-modem flow + costs | ⏳ Next |
+| 9 | Faulty-modem flow + costs | ✅ Done: service tests (17 checks incl. undo) + checked in a browser |
 
 **Before using it for real**
 - [ ] Run **both** migrations by hand in the Supabase SQL Editor, in this order (the app
@@ -44,8 +44,12 @@ status, return prompt when an FTU line goes inactive / disconnected, sheet impor
 modem record per piece (serial / MAC) in step with stock; the Modems page issues and returns
 units with the right stock entries.
 
-**Known gaps:** "With service" units have no swap / service workflow yet (step 9: parcel /
-service / upgrade costs). Bulk purchase and opening stock create blank units (fill MAC /
+**Faulty modems (step 9):** Modems page → **Faulty** → *Send to service* (brand, claim, parcel,
+optional temporary FTU modem) → **Result** (warranty / repaired / upgrade / keep FTU) with the
+costs in locked expense categories and the upgrade income in **Modem Sale**; **Details** shows
+the money and can bring a unit back if it was sent by mistake.
+
+**Known gaps:** Bulk purchase and opening stock create blank units (fill MAC /
 serial on the Modems page). The Income "Edit sale" screen doesn't re-sync units if the
 quantity of a tracked sale is changed.
 
@@ -335,4 +339,4 @@ sent · Returned / Lost.
   clicked. Show them directly without the click?
 
 Everything else is answered and recorded in the Decisions table.
-Next step: Phase 2, step 9 (faulty-modem flow with parcel / service / upgrade costs).
+Nothing left in the plan. Possible follow-ups: bulk purchase / opening stock rows for MAC + serial, re-syncing units when a tracked sale's quantity is edited, a modem event history.
