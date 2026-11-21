@@ -2,6 +2,12 @@
 import { supabase } from "./supabase";
 import { calcStock } from "../utils/productCalc";
 import { STOCK_TYPES, PRODUCT_CODE_PREFIXES } from "../constants";
+import {
+  syncUnitsForTx,
+  createUnitsForPurchases,
+  returnUnits,
+  removeUnitsForPurchases,
+} from "./modemStockService";
 
 // Categories used on the auto-created income/expense rows.
 const PURCHASE_EXPENSE_CATEGORY = "Product purchase";
@@ -104,7 +110,7 @@ export async function createProduct(product) {
   // If the new columns (code / image_urls) aren't there yet, retry without them.
   if (error) {
     /* eslint-disable no-unused-vars */
-    const { code, image_urls, ...basic } = row;
+    const { code, image_urls, track_units, ...basic } = row;
     /* eslint-enable no-unused-vars */
     ({ data, error } = await supabase.from("products").insert([basic]).select().single());
   }
@@ -151,7 +157,16 @@ export async function getStockTransactions(productId) {
 // land on the same day.
 export async function addStockTransaction(
   tx,
-  { productName, incomeCategory, incomeNote, paymentMethod, cashAmount, onlineAmount } = {}
+  {
+    productName,
+    incomeCategory,
+    incomeNote,
+    paymentMethod,
+    cashAmount,
+    onlineAmount,
+    units, // modem units for tracked products: { details[] } on stock in, { unitIds, connectionId, ownership } on stock out
+    connectionId, // links the sale's income row to a customer's connection
+  } = {}
 ) {
   const { data, error } = await supabase
     .from("stock_transactions")
@@ -214,16 +229,33 @@ export async function addStockTransaction(
       category: incomeCategory || SALE_INCOME_CATEGORY,
       note,
       stock_tx_id: data.id, // link the money to this stock movement
+      ...(connectionId ? { connection_id: connectionId } : {}),
       ...(paymentMethod ? { payment_method: paymentMethod } : {}),
       ...(tx.created_at ? { created_at: tx.created_at } : {}),
     };
     let { error: e } = await supabase.from("income").insert([row]);
-    // If the link column doesn't exist yet (migration not run), save without it.
+    // If a link column doesn't exist yet (migration not run), save without it.
+    if (e && connectionId) {
+      /* eslint-disable no-unused-vars */
+      const { connection_id, ...noConn } = row;
+      /* eslint-enable no-unused-vars */
+      ({ error: e } = await supabase.from("income").insert([noConn]));
+    }
     if (e) {
-      const { stock_tx_id, ...noLink } = row;
+      /* eslint-disable no-unused-vars */
+      const { stock_tx_id, connection_id, ...noLink } = row;
+      /* eslint-enable no-unused-vars */
       ({ error: e } = await supabase.from("income").insert([noLink]));
     }
     if (e) throw e;
+  }
+
+  // Tracked modem products: move the matching units too. The stock entry is already
+  // saved, so a failure here is reported clearly instead of being swallowed.
+  try {
+    await syncUnitsForTx(data, { units });
+  } catch (err) {
+    throw new Error(`The stock entry was saved, but updating the modem units failed: ${err.message}`, { cause: err });
   }
 
   return data;
@@ -328,6 +360,13 @@ export async function recordReturn({
     .select("id")
     .single();
   if (error) throw error;
+
+  // Tracked modem products: the returned units come back into stock.
+  try {
+    await returnUnits({ id: data.id, product_id: productId, quantity: qty });
+  } catch (err) {
+    throw new Error(`The return was saved, but updating the modem units failed: ${err.message}`, { cause: err });
+  }
 
   if (amount > 0) {
     const expenseRow = {
@@ -531,6 +570,18 @@ export async function addBulkPurchase({
         .eq("id", l.product_id);
     }
   }
+
+  // Tracked modem products: one in-stock unit per piece bought (serial / MAC can be
+  // filled in later on the Modems page).
+  if (inserted?.length === rows.length) {
+    try {
+      await createUnitsForPurchases(
+        rows.map((r, i) => ({ id: inserted[i].id, product_id: r.product_id, quantity: r.quantity }))
+      );
+    } catch (err) {
+      throw new Error(`The purchase was saved, but creating the modem units failed: ${err.message}`, { cause: err });
+    }
+  }
 }
 
 // Opening stock: record the quantities you already had on the shelf. Adds stock
@@ -552,8 +603,22 @@ export async function addOpeningStockBatch({ lines, asOfDate = "" }) {
     ...(createdAt ? { created_at: createdAt } : {}),
   }));
 
-  const { error } = await supabase.from("stock_transactions").insert(rows);
+  const { data: inserted, error } = await supabase
+    .from("stock_transactions")
+    .insert(rows)
+    .select("id");
   if (error) throw error;
+
+  // Tracked modem products: one in-stock unit per piece.
+  if (inserted?.length === rows.length) {
+    try {
+      await createUnitsForPurchases(
+        rows.map((r, i) => ({ id: inserted[i].id, product_id: r.product_id, quantity: r.quantity }))
+      );
+    } catch (err) {
+      throw new Error(`The opening stock was saved, but creating the modem units failed: ${err.message}`, { cause: err });
+    }
+  }
 
   // Save/refresh each product's selling price when one was entered.
   for (const l of lines) {
@@ -574,6 +639,10 @@ export async function deletePurchaseBatch(items) {
   const expenseIds = [
     ...new Set(items.map((i) => i.expense_id).filter(Boolean)),
   ];
+
+  // Tracked modem products: remove the units this purchase created (refused if any
+  // were already issued or sold).
+  await removeUnitsForPurchases(stockIds);
 
   if (stockIds.length) {
     const { error } = await supabase

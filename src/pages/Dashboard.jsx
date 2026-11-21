@@ -15,6 +15,9 @@ import { getEntries } from "../services/financeService";
 import { getProductsWithStock, getSales } from "../services/productsService";
 import { getWorkersWithBalance } from "../services/workersService";
 import { getPendingCount } from "../services/usersService";
+import { getModems } from "../services/modemsService";
+import { getFtuSettings } from "../services/settingsService";
+import { reminderFor } from "../utils/ftu";
 import { isLowStock } from "../utils/productCalc";
 import { formatCurrency, formatDate } from "../utils/format";
 import { useAuth } from "../context/AuthContext";
@@ -85,6 +88,7 @@ export default function Dashboard() {
   const [sales, setSales] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [pending, setPending] = useState(0);
+  const [ftu, setFtu] = useState(null); // { out, collect, due } — free-to-use modems with customers
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState(currentMonthRange());
 
@@ -102,6 +106,18 @@ export default function Dashboard() {
         setExpenses(exp);
         setProducts(prods);
         setSales(sls);
+        // FTU modems: how many are out, and how many need collecting. Never blocks the dashboard.
+        Promise.all([getModems(), getFtuSettings()])
+          .then(([modems, settings]) => {
+            const out = modems.filter((m) => m.status === "with_customer" && m.ownership === "ftu");
+            const levels = out.map((m) => (m.connection ? reminderFor(m.connection, [m], settings).level : "none"));
+            setFtu({
+              out: out.length,
+              collect: levels.filter((l) => l === "collect" || l === "collect_now").length,
+              due: levels.filter((l) => l === "due").length,
+            });
+          })
+          .catch(() => {});
         if (isAdmin) {
           getWorkersWithBalance().then(setWorkers).catch(() => {});
           getPendingCount().then(setPending).catch(() => {});
@@ -312,6 +328,19 @@ export default function Dashboard() {
         <StatCard label="Low-stock items" value={lowStock.length} icon="⚠️"
           accent={lowStock.length > 0 ? "red" : "green"} onClick={() => navigate("/products")} />
         <StatCard label="Stock value" value={formatCurrency(stockValue)} icon="🏷️" accent="blue" />
+        {ftu && ftu.out > 0 && (
+          <StatCard
+            label="FTU modems out"
+            value={ftu.out}
+            icon="📶"
+            accent={ftu.collect > 0 ? "red" : "green"}
+            onClick={() => navigate("/modems", { state: { view: ftu.collect > 0 ? "collect" : "with_customer" } })}
+          >
+            <p className="mt-1 text-xs text-gray-500">
+              Collect {ftu.collect} · Due soon {ftu.due}
+            </p>
+          </StatCard>
+        )}
         {isAdmin && (
           <StatCard label="Worker balance due" value={formatCurrency(balanceDue)} icon="👷"
             accent="orange" onClick={() => navigate("/workers")} />

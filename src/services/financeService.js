@@ -1,6 +1,7 @@
 // Shared calls for the income and expenses tables (same shape, so one service
 // handles both — pass table = "income" or "expenses").
 import { supabase } from "./supabase";
+import { revertOutByTx } from "./modemStockService";
 
 // Turn a date input ("YYYY-MM-DD") into a timestamp, keeping the current
 // time-of-day so same-day entries stay in order. Empty → undefined (DB now()).
@@ -51,7 +52,7 @@ export async function getEntries(table) {
 
 export async function addEntry(
   table,
-  { amount, category, note, date, paymentMethod, cashAmount, onlineAmount }
+  { amount, category, note, date, paymentMethod, cashAmount, onlineAmount, connectionId }
 ) {
   const createdAt = entryTimestamp(date);
   const row = {
@@ -70,17 +71,20 @@ export async function addEntry(
   }
   // Try with the payment columns; fall back progressively if a column/migration
   // is missing, so the insert still succeeds on an older schema.
+  // Income may also be tied to a customer's connection (New Internet entries).
+  const link = table === "income" && connectionId ? { connection_id: connectionId } : {};
   const attempts = [
-    { ...row, ...pay },
+    { ...row, ...pay, ...link },
+    ...(connectionId ? [{ ...row, ...pay }] : []),
     ...(pay.payment_method ? [{ ...row, payment_method: pay.payment_method }] : []),
     row,
   ];
   let lastErr;
   for (const attempt of attempts) {
-    const { error } = await supabase.from(table).insert([attempt]);
-    if (!error) return;
+    const { data, error } = await supabase.from(table).insert([attempt]).select("id").single();
+    if (!error) return data; // { id } — lets a caller undo this row if a later step fails
     lastErr = error;
-    if (!/column|cash_amount|online_amount|payment_method|schema cache/i.test(error.message))
+    if (!/column|cash_amount|online_amount|payment_method|connection_id|schema cache/i.test(error.message))
       break;
   }
   throw lastErr;
@@ -112,6 +116,8 @@ export async function deleteEntry(table, id) {
 // stock movement restores stock, since stock is computed from the movements.
 export async function deleteIncomeEntry(entry) {
   if (entry.stock_tx_id) {
+    // Tracked modem products: put the sold unit back in stock first.
+    await revertOutByTx(entry.stock_tx_id);
     const { error } = await supabase
       .from("stock_transactions")
       .delete()

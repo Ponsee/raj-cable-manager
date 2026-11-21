@@ -29,8 +29,12 @@ export default function Expense() {
           "Worker expense",
           "Contract work",
           "Customer refund",
+          // Faulty-modem service costs (Modems page → Faulty / Result / Details)
+          "Modem Parcel",
+          "Modem Service",
+          "Modem Upgrade",
         ],
-        lockedHint: "Added automatically — delete it from the purchase or worker entry.",
+        lockedHint: "Added automatically — delete it from the purchase, worker entry or modem service.",
       }}
     />
   );

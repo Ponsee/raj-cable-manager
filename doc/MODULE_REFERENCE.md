@@ -66,6 +66,8 @@ config) needed for them to work.
 | `2026-06-27_payment_method_expense_worker.sql` | `expenses.payment_method` + `worker_transactions.payment_method` (Cash/Online) |
 | `2026-06-27_split_payment.sql` | `expenses.cash_amount` + `online_amount` (the breakdown for a **Split** payment) |
 | `2026-06-27_pending_payments.sql` | `pending_payments` table (customer credit) incl. `category` column + RLS |
+| `2026-11-21_modem_stock_sync.sql` | **Stock ↔ modem units:** `products.track_units`, unit status `out`, `modems.out_tx_id` (+ indexes). Safe to re-run; the app works without it. |
+| `2026-10-29_customers_connections_modems.sql` | **FTU tracking (phase 1):** `customers`, `providers` (BSNL / TIC seed with their form fields), `connections` (per-line status + last recharge), `modems` (serial / MAC, one per line), `app_settings` (FTU thresholds), `income.connection_id` + RLS. No UI yet. |
 
 **Storage:** the `product-images` bucket is created by the migration above
 (running `2026-05-30_product_images_bucket.sql` in the SQL Editor). You can also
@@ -278,6 +280,31 @@ Both money tables carry **how the money moved**:
   **lostQty**, **lossValue**.
 - `isLowStock(stock, min)`, `pricesByVendor(txs)` (cheapest-first vendor comparison).
 
+### Track each unit (modems) — `products.track_units`
+- Product form checkbox **"Track each unit (serial / MAC)"**. Stock is still calculated
+  from stock entries; for these products every stock action also moves the matching
+  **modem units** (`modems`), so the two agree:
+
+  | Stock action | Units |
+  |---|---|
+  | Purchase / bulk purchase / opening stock of N | N new in-stock units (single Add Stock form shows a **MAC + serial row per unit**, with *Paste a list*; bulk / opening create blank units to fill in on the Modems page) |
+  | Sale / Used in service | a unit goes **out** (the oldest, or the one picked under *Which unit?* for a single piece) |
+  | Loss | a unit becomes **lost** |
+  | Customer return | the last sold unit comes back in stock |
+  | Credit sale (Pending) | a unit goes out |
+  | Delete a sale | its unit is put back in stock |
+  | Delete a purchase | its units are removed; **refused** if any were already issued or sold |
+
+- Products page shows **📶 N units tracked** and a **⚠ N missing — add** button (adds blank
+  units) when stock and units differ (e.g. stock bought before tracking was switched on),
+  or a warning when there are more units than stock. Delete is hidden for units that belong
+  to a stock product (use *Report loss* so stock stays right).
+- Unit statuses: `in_stock`, `with_customer`, `with_service`, `lost`, and **`out`** (sold /
+  used without a tracked connection); `modems.out_tx_id` links a unit to the stock entry
+  that took it out. Needs migration `2026-11-21_modem_stock_sync.sql`; without it nothing
+  changes. Services: `modemStockService.js` (primitives), `modemFlowService.js` (issue /
+  return / add a unit).
+
 ### Stock entry types (`stock_transactions.type`)
 - **Purchase** 🛒 — stock in; creates an **Expense** (with Cash/Online/**Split**);
   per-batch **selling price**; pick a **vendor**.
@@ -415,13 +442,24 @@ badge per type with a per-type filter.
   drive the fields per entry via a `mode`:
   - `simple` (Daily Collection, **Home Collection** 🏠, Cable Collection, Other)
     → just an amount.
-  - `device` (Shop Collection, New Cable HD/SD, New Internet) → **multiple
-    products** (each qty + price), optional **charge** (e.g. install). Priced
-    item → **Sale** (income + stock out); ₹0 item → **Used** (stock out, no income).
-    **New Internet has `productOptional: true`** — the product can be left empty
-    (customer uses their own modem); then the **install charge must be > 0**
-    (nothing else would be recorded). Only the charge is saved as income and
-    stock is untouched. Other device sources still require a product.
+  - `device` (Shop Collection, New Cable HD/SD) → **multiple products** (each qty +
+    price), optional **charge**. Priced item → **Sale** (income + stock out); ₹0
+    item → **Used** (stock out, no income).
+  - `internet` (**New Internet**, `components/finance/NewInternetFields.jsx` +
+    `services/newInternetService.js`) → ONE entry creates the **customer** (pick an
+    existing one or "+ New customer": name + phone required), a **connection** with the
+    chosen provider's fields (BSNL password prefilled), install date, plan amount and
+    install charge (0 allowed, blank not), first recharge date, the **modem** and the
+    **income**. Modem: **FTU (ours)** or **Customer bought** → pick an in-stock unit
+    (shown as product · MAC · serial; bought also takes the selling price) — FTU makes a
+    "usage" stock entry (no income), bought a "sale" (income "New Internet", linked to the
+    stock entry); **Own modem** → optional MAC / serial saved as a customer-owned modem
+    with no stock change (a valid MAC is checked). Income rows (plan, install, modem) are
+    separate, all tagged with the new connection. **Part payment** works: only the paid
+    part is income, the balance goes to Pending, and the modem's sale stock entry carries
+    no income. If any step fails the earlier ones are undone (customer, connection, unit,
+    income) so nothing half-saved is left. Everything ₹0 saves no income row. The same
+    unit can't be picked on two entries of one batch.
   - `provider` (Internet Recharge) → provider (`INTERNET_PROVIDERS`, add-new) + amount.
 - Source order (most-used first): **Cable Collection · Shop Collection · Daily
   Collection** · New Cable · New Internet · Internet Recharge · Other (entry 1
@@ -660,7 +698,9 @@ top-up, suggested, est. cost; Low items flagged). Nav: **🧮 Buy Plan** (adminO
 The old **Reports** page was merged here and removed. The Dashboard is now the
 single analytics page, driven by a header **DateRangePicker** + **Export Excel**:
 - Greeting uses the user's **profile name**.
-- **KPI cards** (clickable → relevant page): Today's income · Income/Expense
+- **KPI cards** (clickable → relevant page): **FTU modems out** (count of free-to-use modems
+  with customers + "Collect N · Due soon M"; red when something needs collecting; opens the
+  Modems page already filtered; hidden when none are out) · Today's income · Income/Expense
   (range) · Net profit · Cash · Online · Low-stock · Stock value · **Worker balance
   due** *(admin)* · **Pending approvals** *(admin, when >0)*.
 - **Charts:** Income vs Expense per day (shared `IncomeExpenseChart`), **Income by
@@ -683,6 +723,16 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 - **My profile** — edit name + mobile (updates `profiles`); read-only email/role/status.
 - **Change password** — `supabase.auth.updateUser({ password })`.
 - **Account** — sign out; admins get a link to Users.
+- **FTU modem reminders** (admin) — the two day thresholds (default **30** "Due soon" /
+  **60** "Collect modem"; due must be less than collect). Stored in `app_settings`; used by
+  the Customers, Modems and Dashboard pages.
+- **Internet providers & their fields** (admin, `components/settings/ProvidersCard.jsx`) —
+  rename a provider, mark it inactive, add a provider (starts with user name / password /
+  plan name), and edit each provider's connection-form fields: name, type (text / number /
+  date / secret), required, default value (BSNL password = `password`), reorder, delete.
+  User name / password / plan name can't be removed or retyped. Existing field keys never
+  change, so values already saved on connections are kept (shown as "this connection" if
+  the field is later deleted).
 - **About** — app name + version.
 
 ---
@@ -699,6 +749,16 @@ single analytics page, driven by a header **DateRangePicker** + **Export Excel**
 | `components/ui/ConfirmDialog.jsx` | Styled confirm popup; used for **all** deletes |
 | `components/ui/DateRangePicker.jsx` | **Single control**: one field shows the range, opens a popover with **shortcut chips** (Today / Last 7·30 days / This·Last month / **Last 6 months** / This year / **Last year** / Clear) + a range calendar. Free `@mui/x-date-pickers`. Exports `inRange()`, `currentMonthRange()`, `lastMonthsRange(n)` |
 | `components/finance/LedgerPage.jsx` | Shared money ledger (Expense): range cards, month-compare, category breakdown, locked auto-rows, **unified add** (chooser → reused Worker/Bulk-Purchase modals), **payment filter chips + "Paid via" column** (config `paymentFilter`) |
+| `services/customersService.js`, `providersService.js`, `connectionsService.js`, `modemsService.js`, `settingsService.js`, `dbErrors.js` | FTU tracking data layer (no UI yet): customers → lines → modems, provider field lists (+ "Add field"), per-line status / **Recharged**, modem FTU / Own / None, returned / lost, FTU thresholds; `dbErrors` turns DB errors into plain messages |
+| `pages/Customers.jsx` (`/customers`) | Customer list: search (name / phone / username / landline / account), provider / status / modem filters, count pills, per-line chips (status, FTU / Own / No modem, collect reminder, last recharge), tick customers → bulk **Set modem / Set status**, + Add Customer |
+| `pages/CustomerDetails.jsx` (`/customers/:id`) | Basic details + one card per connection: status dropdown, **Recharged**, Edit, Delete, masked password / Aadhaar (show + copy), provider fields, modem MAC / serial; asks to **Mark returned** when a line with an FTU modem goes Inactive / Disconnected |
+| `components/customers/ConnectionModal.jsx` | Add / edit a line: provider picker swaps the form to that provider's fields (BSNL password prefilled), **+ Add field** (provider-wide or this connection only), plan, status, install / last recharge dates, modem FTU / Own / None with MAC + serial |
+| `pages/Modems.jsx` (`/modems`, Inventory) | Modems list with clickable cards (In stock / With customer / Due soon / Collect now / Not set / With service), status + ownership filters, search (MAC, serial, customer, phone), worst-reminder first; actions per row: **Issue** (stock unit → a customer's line without a modem, FTU or sold), **Notice** (prefilled message, WhatsApp / SMS link, stores the notice date), **Returned** (back to stock, off the line), **Lost** (optional charge goes to Pending as "Modem Sale", no income), **Delete** (admin, in-stock only), **+ Add modem** (the product picker lists **Router-category** products only; a plain unit changes no stock, a product with *Track each unit* adds 1 to its stock) |
+| `components/customers/ServiceModals.jsx`, `services/modemRepairService.js`, `utils/modemService.js` | **Faulty modems** (Modems page → **Faulty** on a unit with a customer): *Send to service* (brand, claim no., date, parcel charge to the brand, optional **temporary FTU modem from stock** put on the line meanwhile) → unit becomes **With service**, leaves the line; *Result* (the brand's answer): **Under warranty** (new unit on the line with the same ownership + new MAC; only parcel costs), **Repaired** (repair cost; unit goes back to the customer, or to stock while the customer keeps the temporary), **Upgrade** (we pay the brand, the customer pays us — two separate amounts with a live profit / loss line; new customer-owned unit), **Customer keeps an FTU modem** (temporary stays, faulty one written off; picks a stock unit if none was given); *Details* (brand, claim, days, money summary + net; **Sent by mistake — bring back**; admin **Remove expense entries**). Parcel is paid both ways (two amounts). Costs go to locked expense categories **Modem Parcel / Modem Service / Modem Upgrade** and income **Modem Sale** (linked to the connection); their ids are kept in `modems.service`. The temporary modem returns to stock before the real one arrives (one modem per line). Every step undoes the earlier ones if a later one fails. The faulty unit is never counted in stock (it left stock when issued); a replacement from the brand isn't a purchase. No migration needed. |
+| `components/customers/ModemModals.jsx` | Add / Issue / Notice / Lost popups for the Modems page |
+| `components/customers/ImportModal.jsx`, `utils/importCustomers.js`, `services/importService.js` | **Import from sheet** (admin, Customers → Import): upload .xlsx / .csv → match columns (auto) + options (date order, status, one last-recharge date, MAC rows → Own / FTU, fill plan amount) → preview (new / existing customer / possible duplicate / already saved / error, per-row tick) → import with a result summary and failed-rows download. Customers match on phone **and** name; BSNL password defaults to `password`; IP-in-plan values dropped; re-running skips saved rows. Blank template download per provider. |
+| `components/customers/RechargedModal.jsx`, `CustomerForm.jsx`, `Chips.jsx` | Recharged date picker; customer fields; status / modem / reminder chips + masked secret + copy |
+| `utils/ftu.js` | Pure helpers: MAC normalising, customer matching (phone + name), derived customer status, modem badge, collect-modem reminder level, provider-field ↔ connection mapping |
 | `components/finance/CategoryDetailsModal.jsx` | Expense "By category" drill-down (purchases by vendor, worker pay by worker, plain entries) |
 | `components/finance/SourceDetailsModal.jsx` | Income "By source" drill-down (sales by product, other rows by note) |
 | `components/finance/IncomeExpenseChart.jsx` | Shared income-vs-expense bar chart (Dashboard) |

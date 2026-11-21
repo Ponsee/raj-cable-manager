@@ -150,9 +150,9 @@ export const INCOME_CATEGORIES = [
 // ---- Income sources (cable TV / broadband business) ----
 // mode drives which fields the Add-Income form shows:
 //   simple   -> just an amount
-//   device   -> product (reduces stock); optional charge if `charge: true`;
-//               `productOptional: true` lets it be saved without any product
+//   device   -> product (reduces stock); optional charge if `charge: true`
 //   provider -> provider dropdown + amount
+//   internet -> New Internet: customer + provider details + plan / install + modem
 // device notes: a product with price 0 is treated as "free" (stock still drops,
 // no sale income); `variants` adds a HD/SD style toggle; `charge` adds a
 // separate connection/install charge field.
@@ -181,11 +181,8 @@ export const INCOME_SOURCES = [
     key: "new_internet",
     label: "New Internet",
     icon: "🌐",
-    mode: "device",
-    hint: "Pick the modem / ONU (price 0 if free) — optional if the customer uses their own modem",
-    productOptional: true, // no product needed (own modem); then a charge is required
-    charge: true,
-    chargeLabel: "Install charge (₹ — 0 if free)",
+    // Customer + provider details + modem in one entry (see NewInternetFields).
+    mode: "internet",
   },
   {
     key: "internet_recharge",
@@ -198,6 +195,45 @@ export const INCOME_SOURCES = [
 
 // Starting list for the recharge provider dropdown (users can add more).
 export const INTERNET_PROVIDERS = ["BSNL", "TIC Fiber"];
+
+// ---- Customers / connections / modems (FTU tracking) ----
+// Status is tracked per connection (provider line), not per customer.
+export const CONNECTION_STATUS = {
+  ACTIVE: "active",
+  INACTIVE: "inactive",
+  DISCONNECTED: "disconnected",
+};
+export const CONNECTION_STATUS_LABELS = {
+  active: "Active",
+  inactive: "Inactive",
+  disconnected: "Disconnected",
+};
+// ftu = ours (collect if the line stops recharging), customer = their own / bought.
+export const MODEM_OWNERSHIP = { FTU: "ftu", CUSTOMER: "customer" };
+export const MODEM_STATUS = {
+  IN_STOCK: "in_stock",
+  WITH_CUSTOMER: "with_customer",
+  WITH_SERVICE: "with_service",
+  LOST: "lost",
+  OUT: "out", // left stock (sold / used) without a tracked connection
+};
+// Faulty-modem service: money goes to these locked categories (created from the
+// service screens, so they aren't offered in the manual expense form).
+export const SERVICE_CATEGORY = {
+  PARCEL: "Modem Parcel", // courier to / from the brand (expense)
+  SERVICE: "Modem Service", // repair cost (expense)
+  UPGRADE: "Modem Upgrade", // what we pay the brand for a new model (expense)
+  SALE: "Modem Sale", // what the customer pays us (income)
+};
+export const SERVICE_OUTCOME = {
+  WARRANTY_REPLACED: "warranty_replaced",
+  REPAIRED: "repaired",
+  UPGRADE: "upgrade",
+  KEEP_FTU: "keep_ftu",
+};
+// Reminder thresholds (days since last recharge); overridden by app_settings.
+export const FTU_DEFAULT_DUE_DAYS = 30;
+export const FTU_DEFAULT_COLLECT_DAYS = 60;
 
 // ---- ID Recharge (expense) ----
 // Money paid to the MSO / provider to recharge a subscriber ID. The expense is
@@ -225,6 +261,7 @@ export const EXPENSE_CATEGORIES = [
 // ---- Sidebar navigation (grouped by section) ----
 export const NAV_ITEMS = [
   { label: "Dashboard", path: "/dashboard", icon: "📊", group: "Main" },
+  { label: "Customers", path: "/customers", icon: "🧑‍💼", group: "Main" },
 
   { label: "Income", path: "/income", icon: "🟢", group: "Finance" },
   { label: "Expense", path: "/expense", icon: "🔴", group: "Finance" },
@@ -232,6 +269,7 @@ export const NAV_ITEMS = [
 
   { label: "Products", path: "/products", icon: "📦", group: "Inventory" },
   { label: "Vendors", path: "/vendors", icon: "🏪", group: "Inventory" },
+  { label: "Modems", path: "/modems", icon: "📶", group: "Inventory" },
   { label: "Buy Plan", path: "/purchase-plan", icon: "🧮", adminOnly: true, group: "Inventory" },
 
   { label: "Workers", path: "/workers", icon: "👷", adminOnly: true, group: "Team" },

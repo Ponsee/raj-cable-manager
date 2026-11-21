@@ -16,6 +16,7 @@ import {
   getCategorySuggestions,
   uploadProductImage,
 } from "../services/productsService";
+import { getUnitCounts, syncPlaceholders } from "../services/modemStockService";
 import { PRODUCT_CATEGORIES, PRODUCT_TYPES, productTypeLabel } from "../constants";
 import { formatCurrency } from "../utils/format";
 import { isLowStock } from "../utils/productCalc";
@@ -45,11 +46,14 @@ export default function Products() {
   const [cats, setCats] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [unitCounts, setUnitCounts] = useState({}); // productId -> in-stock units (tracked products)
+  const [syncing, setSyncing] = useState("");
 
   const load = async () => {
     setLoading(true);
     try {
       setProducts(await getProductsWithStock());
+      setUnitCounts(await getUnitCounts());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -84,6 +88,7 @@ export default function Products() {
         minimum_stock: Number(form.minimum_stock) || 0,
         image_url: image_urls[0] || null,
         image_urls: image_urls.length ? image_urls : null,
+        ...(form.track_units ? { track_units: true } : {}),
       });
       setModalOpen(false);
       setForm(emptyProductForm);
@@ -297,6 +302,24 @@ export default function Products() {
                             Low
                           </span>
                         )}
+                        {p.track_units && (
+                          <UnitsChip
+                            stock={p.stock}
+                            units={unitCounts[p.id] || 0}
+                            busy={syncing === p.id}
+                            onSync={async () => {
+                              setSyncing(p.id);
+                              try {
+                                await syncPlaceholders(p.id, p.stock);
+                                await load();
+                              } catch (e) {
+                                setError(e.message);
+                              } finally {
+                                setSyncing("");
+                              }
+                            }}
+                          />
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right text-gray-600">
                         {p.lastPurchasePrice ? formatCurrency(p.lastPurchasePrice) : "-"}
@@ -403,6 +426,33 @@ export default function Products() {
         loading={deleting}
         error={deleteError}
       />
+    </div>
+  );
+}
+
+// Tracked products: how many unit records match the stock count. A mismatch (e.g.
+// stock bought before tracking was switched on) can be fixed in one click.
+function UnitsChip({ stock, units, busy, onSync }) {
+  const diff = Math.round(Number(stock) || 0) - units;
+  return (
+    <div className="mt-1 text-xs" onClick={(e) => e.stopPropagation()}>
+      <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700">📶 {units} units tracked</span>
+      {diff > 0 && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onSync}
+          className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 hover:bg-amber-200"
+          title="Add blank unit records so the unit count matches the stock"
+        >
+          {busy ? "Adding..." : `⚠ ${diff} missing — add`}
+        </button>
+      )}
+      {diff < 0 && (
+        <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-red-700" title="Remove extra units on the Modems page">
+          ⚠ {-diff} more units than stock
+        </span>
+      )}
     </div>
   );
 }

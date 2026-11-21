@@ -5,6 +5,7 @@
 import { supabase } from "./supabase";
 import { addEntry } from "./financeService";
 import { STOCK_TYPES } from "../constants";
+import { takeUnitsOut } from "./modemStockService";
 
 const SALE_INCOME_CATEGORY = "Product sales";
 
@@ -48,6 +49,7 @@ export async function addPending({
   paidNow,
   paymentMethod,
   date = "",
+  connectionId, // links the paid part's income row to a customer's connection
 }) {
   const totalAmt = Number(total) || 0;
   const paid = Math.min(Number(paidNow) || 0, totalAmt);
@@ -64,6 +66,7 @@ export async function addPending({
       note: `${item} — ${who} (paid ${paid} of ${totalAmt})`,
       date,
       paymentMethod,
+      connectionId,
     });
   }
 
@@ -75,17 +78,22 @@ export async function addPending({
       ? [{ product_id: productId, quantity: Number(quantity) || 0, total_amount: totalAmt }]
       : [];
   if (drops.length) {
-    await supabase.from("stock_transactions").insert(
-      drops.map((d) => ({
-        product_id: d.product_id,
-        type: STOCK_TYPES.SALE,
-        quantity: Number(d.quantity) || 0,
-        price_per_unit: (Number(d.total_amount) || 0) / (Number(d.quantity) || 1),
-        total_amount: Number(d.total_amount) || 0,
-        note: `Credit sale — ${who}`,
-        ...(createdAt ? { created_at: createdAt } : {}),
-      }))
-    );
+    const { data: txRows } = await supabase
+      .from("stock_transactions")
+      .insert(
+        drops.map((d) => ({
+          product_id: d.product_id,
+          type: STOCK_TYPES.SALE,
+          quantity: Number(d.quantity) || 0,
+          price_per_unit: (Number(d.total_amount) || 0) / (Number(d.quantity) || 1),
+          total_amount: Number(d.total_amount) || 0,
+          note: `Credit sale — ${who}`,
+          ...(createdAt ? { created_at: createdAt } : {}),
+        }))
+      )
+      .select("id, product_id, type, quantity");
+    // Tracked modem products: the units leave stock too.
+    for (const tx of txRows || []) await takeUnitsOut(tx);
   }
 
   // 3) Track the balance owed.

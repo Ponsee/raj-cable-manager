@@ -4,6 +4,7 @@ import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import StatCard from "../components/ui/StatCard";
 import SourceDetailsModal from "../components/finance/SourceDetailsModal";
+import NewInternetFields from "../components/finance/NewInternetFields";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import DateRangePicker, {
   inRange,
@@ -36,6 +37,12 @@ import StockLossModal from "../components/products/StockLossModal";
 import ReturnModal from "../components/products/ReturnModal";
 import AddPendingModal from "../components/finance/AddPendingModal";
 import { addPending } from "../services/pendingService";
+import { saveNewInternet, newInternetTotals } from "../services/newInternetService";
+import { getCustomers } from "../services/customersService";
+import { getProviders } from "../services/providersService";
+import { getModems } from "../services/modemsService";
+import { internetDefaults } from "../utils/newInternet";
+import { providerDefaults, normalizeMac } from "../utils/ftu";
 import {
   INCOME_SOURCES,
   INTERNET_PROVIDERS,
@@ -643,6 +650,7 @@ function PaymentToggle({ value, onChange }) {
 function lineFullTotal(line) {
   const src = srcOf(line.sourceKey);
   if (!src) return 0;
+  if (src.mode === "internet") return newInternetTotals(line).total;
   if (src.mode === "device") {
     const items = (line.items || []).reduce(
       (s, it) => s + (Number(it.qty) || 0) * (Number(it.sellPrice) || 0),
@@ -661,22 +669,52 @@ function lineIncome(line) {
   return lineFullTotal(line);
 }
 
+// The provider chosen on a New Internet line (the first one until another is picked).
+const internetProvider = (line, refs) =>
+  refs.providers.find((p) => p.id === (line.providerId || refs.providers[0]?.id));
+
+// New Internet checks: customer, provider fields, amounts, modem.
+function validateInternet(line, refs, label) {
+  if (refs.loading) return `${label}: still loading customers and providers, try again in a moment.`;
+  if (line.customerMode === "existing" && !line.customerId)
+    return `${label}: pick the customer, or add a new one.`;
+  if (line.customerMode === "new") {
+    if (!line.newCustomer.name.trim()) return `${label}: enter the new customer's name.`;
+    if (!line.newCustomer.phone.trim()) return `${label}: enter the new customer's phone number.`;
+  }
+  const provider = internetProvider(line, refs);
+  if (!provider) return `${label}: choose a provider.`;
+  const values = { ...providerDefaults(provider.fields), ...line.values };
+  const missing = provider.fields.filter((f) => f.required && !String(values[f.key] ?? "").trim());
+  if (missing.length) return `${label}: fill in ${missing.map((f) => f.label).join(", ")}.`;
+  if (line.planAmount === "" || line.installCharge === "")
+    return `${label}: enter the plan amount and the install charge (0 if free).`;
+  if (Number(line.planAmount) < 0 || Number(line.installCharge) < 0)
+    return `${label}: amounts can't be negative.`;
+  if (line.modemKind === "ftu" || line.modemKind === "bought") {
+    if (!refs.units.some((u) => u.id === line.unitId)) return `${label}: pick the modem unit.`;
+  }
+  if (line.modemKind === "bought" && (line.sellPrice === "" || Number(line.sellPrice) < 0))
+    return `${label}: enter the modem's selling price (0 if free).`;
+  if (line.modemKind === "own" && normalizeMac(line.ownMac) === null)
+    return `${label}: that isn't a valid MAC address.`;
+  return null;
+}
+
 // Validate one line; return an error message or null.
-function validateLine(line) {
+function validateLine(line, refs) {
   const src = srcOf(line.sourceKey);
   if (!src) return "Pick a source.";
   if (src.mode === "simple" && !(Number(line.amount) > 0))
     return `${src.label}: enter an amount.`;
+  if (src.mode === "internet") {
+    const err = validateInternet(line, refs, src.label);
+    if (err) return err;
+  }
   if (src.mode === "device") {
     const items = line.items || [];
-    const hasProduct = items.some((it) => it.productId);
-    if (!hasProduct && !src.productOptional)
+    if (!items.some((it) => it.productId))
       return `${src.label}: pick at least one product.`;
-    // Product is optional (customer's own modem) — but then the charge is the income.
-    if (!hasProduct && !(Number(line.amount) > 0))
-      return `${src.label}: pick a product, or enter the ${
-        (src.chargeLabel || "charge").split(" (")[0].toLowerCase()
-      }.`;
     for (const it of items) {
       if (it.productId && !(Number(it.qty) > 0))
         return `${src.label}: quantity must be at least 1 for each product.`;
@@ -734,10 +772,28 @@ async function savePendingLine(line, date, products) {
 }
 
 // Persist one line (income row, and a stock-out Sale for device lines).
-async function saveLine(line, date, products) {
+async function saveLine(line, date, products, refs) {
   const src = srcOf(line.sourceKey);
   const createdAt = tsFromDate(date);
   const paymentMethod = line.paymentMethod || PAYMENT_METHODS[0];
+
+  // New Internet: customer + connection + modem + income in one go (handles part
+  // payment itself).
+  if (src.mode === "internet") {
+    const provider = internetProvider(line, refs);
+    return saveNewInternet(
+      { ...line, paymentMethod, values: { ...providerDefaults(provider.fields), ...line.values } },
+      {
+        date,
+        provider,
+        customerName:
+          line.customerMode === "new"
+            ? line.newCustomer.name.trim()
+            : refs.customers.find((c) => c.id === line.customerId)?.name,
+        unit: refs.units.find((u) => u.id === line.unitId),
+      }
+    );
+  }
 
   // Partial payment → route through the pending (credit sale) flow instead.
   if (line.pending) return savePendingLine(line, date, products);
@@ -814,6 +870,7 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
     customer: "",
     paidNow: "",
     note: "",
+    ...internetDefaults(),
   });
 
   const [date, setDate] = useState(todayStr());
@@ -822,6 +879,29 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
   const [adjustNote, setAdjustNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Customers, providers and in-stock modem units for New Internet lines.
+  const [refs, setRefs] = useState({ loading: true, customers: [], providers: [], units: [], error: "" });
+  const needsRefs = open && lines.some((l) => srcOf(l.sourceKey)?.mode === "internet");
+
+  useEffect(() => {
+    if (!needsRefs) return;
+    let alive = true;
+    Promise.all([getCustomers(), getProviders(), getModems()])
+      .then(([customers, providers, modems]) => {
+        if (alive)
+          setRefs({
+            loading: false,
+            customers,
+            providers,
+            units: modems.filter((m) => m.status === "in_stock"),
+            error: "",
+          });
+      })
+      .catch((e) => alive && setRefs((r) => ({ ...r, loading: false, error: e.message })));
+    return () => {
+      alive = false;
+    };
+  }, [needsRefs]);
 
   useEffect(() => {
     if (open) {
@@ -859,9 +939,15 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
 
     // Per-line validation.
     for (let i = 0; i < lines.length; i++) {
-      const msg = validateLine(lines[i]);
+      const msg = validateLine(lines[i], refs);
       if (msg) return setError(`Entry ${i + 1} — ${msg}`);
     }
+    // The same modem unit can't go to two customers in one batch.
+    const pickedUnits = lines
+      .filter((l) => srcOf(l.sourceKey).mode === "internet" && (l.modemKind === "ftu" || l.modemKind === "bought"))
+      .map((l) => l.unitId);
+    if (new Set(pickedUnits).size !== pickedUnits.length)
+      return setError("The same modem unit is picked on two entries. Choose a different unit.");
     // Aggregate device quantities per product so the batch can't oversell.
     const need = {};
     for (const l of lines) {
@@ -881,7 +967,7 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
 
     setSaving(true);
     try {
-      for (const l of lines) await saveLine(l, date, products);
+      for (const l of lines) await saveLine(l, date, products, refs);
       // Overall extra (+) / short (−) adjustment — this is a CASH discrepancy
       // (online payments are exact), so it's recorded against cash.
       if (adjust !== 0) {
@@ -926,6 +1012,7 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
               line={line}
               index={i}
               products={products}
+              refs={refs}
               canRemove={lines.length > 1}
               onChange={(patch) => updateLine(line._id, patch)}
               onRemove={() => removeLine(line._id)}
@@ -1011,7 +1098,7 @@ function AddIncomeModal({ open, products, onClose, onSaved }) {
 }
 
 // One income line inside the batch form. Adapts to its chosen source.
-function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
+function IncomeLine({ line, index, products, refs, canRemove, onChange, onRemove }) {
   const src = srcOf(line.sourceKey);
   const { mode } = src;
   const items = line.items || [];
@@ -1028,6 +1115,7 @@ function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
       pending: false,
       customer: "",
       paidNow: "",
+      ...internetDefaults(),
     });
   };
 
@@ -1157,6 +1245,8 @@ function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
         </>
       )}
 
+      {mode === "internet" && <NewInternetFields line={line} onChange={onChange} refs={refs} />}
+
       {mode === "provider" && (
         <>
           <TextField
@@ -1228,13 +1318,15 @@ function IncomeLine({ line, index, products, canRemove, onChange, onRemove }) {
           </label>
           {line.pending && (
             <div className="mt-2 space-y-2">
-              <TextField
-                label="Customer name"
-                size="small"
-                value={line.customer || ""}
-                onChange={(e) => onChange({ customer: e.target.value })}
-                fullWidth
-              />
+              {mode !== "internet" && (
+                <TextField
+                  label="Customer name"
+                  size="small"
+                  value={line.customer || ""}
+                  onChange={(e) => onChange({ customer: e.target.value })}
+                  fullWidth
+                />
+              )}
               <div className="flex flex-wrap items-center gap-3">
                 <TextField
                   label="Paid now"
