@@ -16,7 +16,7 @@ function assertStatus(status) {
 
 // `provider` is the provider row (needs .id and .fields); `values` is the form's
 // { fieldKey: value } map — split into real columns + the details json.
-function rowFrom({ provider, values, installedOn, planAmount, status, lastRechargeOn }) {
+function rowFrom({ provider, values, installedOn, planAmount, status, lastRechargeOn, rechargeExpiresOn }) {
   const row = {};
   if (provider && values) {
     const s = splitFieldValues(provider.fields, values);
@@ -28,6 +28,7 @@ function rowFrom({ provider, values, installedOn, planAmount, status, lastRechar
   if (installedOn !== undefined) row.installed_on = dateOrNull(installedOn);
   if (planAmount !== undefined) row.plan_amount = numOrNull(planAmount);
   if (lastRechargeOn !== undefined) row.last_recharge_on = dateOrNull(lastRechargeOn);
+  if (rechargeExpiresOn !== undefined) row.recharge_expires_on = dateOrNull(rechargeExpiresOn);
   if (status !== undefined) {
     assertStatus(status);
     row.status = status;
@@ -70,10 +71,13 @@ export async function bulkSetConnectionStatus(ids, status) {
 }
 
 // "Recharged" button: record the date by hand (no income entry).
-export async function markRecharged(id, date = todayISO()) {
+export async function markRecharged(id, date = todayISO(), expiresOn) {
   const { error } = await supabase
     .from("connections")
-    .update({ last_recharge_on: dateOrNull(date) })
+    .update({
+      last_recharge_on: dateOrNull(date),
+      ...(expiresOn !== undefined ? { recharge_expires_on: dateOrNull(expiresOn) } : {}),
+    })
     .eq("id", id);
   throwDb(error);
 }

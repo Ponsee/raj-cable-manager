@@ -28,7 +28,7 @@ export async function getModems() {
   const { data, error } = await supabase
     .from("modems")
     .select(
-      "*, product:products(name, subcategory), connection:connections(id, status, last_recharge_on, provider:providers(name), customer:customers(id, name, phone))"
+      "*, product:products(name, subcategory), connection:connections(id, status, last_recharge_on, recharge_expires_on, provider:providers(name), customer:customers(id, name, phone))"
     )
     .order("created_at", { ascending: false });
   throwDb(error);

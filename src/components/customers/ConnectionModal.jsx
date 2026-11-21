@@ -5,6 +5,7 @@ import {
   createConnection,
   updateConnection,
 } from "../../services/connectionsService";
+import RechargeDates from "./RechargeDates";
 import { addProviderField } from "../../services/providersService";
 import { setLineModem } from "../../services/modemsService";
 import {
@@ -81,7 +82,7 @@ function Body({ customerId, connection, providers, onProviderUpdated, onSaved, o
   const [installedOn, setInstalledOn] = useState(connection?.installed_on || (editing ? "" : todayISO()));
   const [planAmount, setPlanAmount] = useState(connection?.plan_amount ?? "");
   const [status, setStatus] = useState(connection?.status || CONNECTION_STATUS.ACTIVE);
-  const [lastRechargeOn, setLastRechargeOn] = useState(connection?.last_recharge_on || "");
+  const [recharge, setRecharge] = useState({ on: connection?.last_recharge_on || "", expires: connection?.recharge_expires_on || "" });
   const [modemKind, setModemKind] = useState(
     startModem ? (startModem.ownership === "ftu" ? "ftu" : "customer") : "none"
   );
@@ -136,7 +137,7 @@ function Body({ customerId, connection, providers, onProviderUpdated, onSaved, o
 
     setSaving(true);
     try {
-      const payload = { provider, values, installedOn, planAmount, status, lastRechargeOn };
+      const payload = { provider, values, installedOn, planAmount, status, lastRechargeOn: recharge.on, rechargeExpiresOn: recharge.expires };
       let id = connection?.id || savedConn?.id;
       if (id) await updateConnection(id, payload);
       else {
@@ -293,15 +294,9 @@ function Body({ customerId, connection, providers, onProviderUpdated, onSaved, o
             className={inputClass}
           />
         </Field>
-        <Field label="Last recharge date">
-          <input
-            type="date"
-            value={lastRechargeOn || ""}
-            onChange={(e) => setLastRechargeOn(e.target.value)}
-            className={inputClass}
-          />
-          <p className="mt-1 text-xs text-gray-400">Leave blank if not known yet.</p>
-        </Field>
+        <div className="sm:col-span-2">
+          <RechargeDates on={recharge.on} expires={recharge.expires} onChange={setRecharge} />
+        </div>
       </div>
 
       {/* Modem on this line */}

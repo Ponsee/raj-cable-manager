@@ -410,6 +410,7 @@ create table if not exists connections (
   status text not null default 'active'
     check (status in ('active', 'inactive', 'disconnected')),
   last_recharge_on date,
+  recharge_expires_on date,                     -- when the recharge runs out (default last recharge + 30 days)
   created_at timestamptz default now()
 );
 create index if not exists idx_connections_customer on connections (customer_id);

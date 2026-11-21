@@ -102,6 +102,12 @@ export default function Customers() {
     if (statusFilter !== "all" && !lines.some((l) => l.status === statusFilter)) return false;
     if (modemFilter !== "all" && !lines.some((l) => l.badge === modemFilter)) return false;
     return matchesSearch(c);
+  }).sort((a, b) => {
+    // Newest install first (a customer's latest line counts); no install date goes last.
+    const last = (c) => linesOf(c).map((l) => l.installed_on || "").sort().pop() || "";
+    const [x, y] = [last(a), last(b)];
+    if (x !== y) return x < y ? 1 : -1;
+    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
   });
 
   // Counts over the lines in view (provider filter applies).
@@ -312,7 +318,7 @@ export default function Customers() {
                               <ModemBadge badge={l.badge} />
                               <ReminderChip reminder={reminderFor(l, l.modems, settings)} />
                               <span className="text-xs text-gray-400">
-                                {l.last_recharge_on ? `Recharged ${formatDate(l.last_recharge_on)}` : ""}
+                                {[l.last_recharge_on && `Recharged ${formatDate(l.last_recharge_on)}`, l.recharge_expires_on && `expires ${formatDate(l.recharge_expires_on)}`].filter(Boolean).join(" · ")}
                               </span>
                             </div>
                           ))}

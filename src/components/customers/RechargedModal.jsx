@@ -2,10 +2,8 @@ import { useState } from "react";
 import Modal from "../ui/Modal";
 import Button from "../ui/Button";
 import { markRecharged } from "../../services/connectionsService";
-import { todayISO } from "../../utils/ftu";
-
-const inputClass =
-  "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
+import { todayISO, defaultExpiry } from "../../utils/ftu";
+import RechargeDates from "./RechargeDates";
 
 // "Recharged" button: records the last recharge date by hand (no income entry).
 export default function RechargedModal({ open, onClose, connection, onSaved }) {
@@ -19,17 +17,18 @@ export default function RechargedModal({ open, onClose, connection, onSaved }) {
 }
 
 function Body({ connection, onSaved, onClose }) {
-  const [date, setDate] = useState(todayISO());
+  const [dates, setDates] = useState({ on: todayISO(), expires: defaultExpiry(todayISO()) });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const save = async (e) => {
     e.preventDefault();
+    const date = dates.on;
     if (!date) return setError("Pick the recharge date.");
     setSaving(true);
     setError("");
     try {
-      await markRecharged(connection.id, date);
+      await markRecharged(connection.id, date, dates.expires);
       await onSaved();
       onClose();
     } catch (err) {
@@ -49,16 +48,7 @@ function Body({ connection, onSaved, onClose }) {
         {connection.username ? ` (${connection.username})` : ""}. This does not create an
         income entry.
       </p>
-      <div>
-        <label className="mb-1 block text-sm font-medium text-gray-700">Recharged on</label>
-        <input
-          type="date"
-          value={date}
-          max={todayISO()}
-          onChange={(e) => setDate(e.target.value)}
-          className={inputClass + " sm:max-w-xs"}
-        />
-      </div>
+      <RechargeDates requireOn on={dates.on} expires={dates.expires} onChange={setDates} />
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onClose}>
           Cancel

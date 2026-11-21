@@ -150,7 +150,7 @@ export default function Modems() {
     <div>
       <PageHeader
         title="Modems"
-        subtitle={`FTU reminders: due soon after ${settings.dueDays} days, collect after ${settings.collectDays} days without a recharge`}
+        subtitle="FTU reminders follow each line's Recharge expires on date: due soon = expires within 5 days or expired, collect = expired for 30+ days. Lines with no expiry use days since the last recharge."
         action={<Button onClick={() => setAddOpen(true)}>+ Add modem</Button>}
       />
 
@@ -263,6 +263,11 @@ export default function Modems() {
                         ) : r.connection ? (
                           <span className="text-gray-400">Not set</span>
                         ) : ("—")}
+                        {r.connection?.recharge_expires_on && (
+                          <p className={r.reminder.expired ? "font-medium text-red-600" : "text-gray-500"}>
+                            Expires {formatDate(r.connection.recharge_expires_on)}
+                          </p>
+                        )}
                         {r.notice_sent_on && <p className="mt-1 text-amber-700">Notice sent {formatDate(r.notice_sent_on)}</p>}
                       </td>
                       <td className="px-4 py-3"><ReminderChip reminder={r.reminder} /></td>

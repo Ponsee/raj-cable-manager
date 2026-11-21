@@ -250,6 +250,18 @@ export default function CustomerDetails() {
                       <span className="text-gray-400">Not set</span>
                     )}
                   </Fact>
+                  <Fact label="Recharge expires">
+                    {conn.recharge_expires_on ? (
+                      <>
+                        {formatDate(conn.recharge_expires_on)}
+                        <span className={`ml-1 text-xs ${reminder.expired ? "font-medium text-red-600" : "text-gray-400"}`}>
+                          ({reminder.expired ? `expired ${reminder.overdue} days ago` : reminder.expiresIn === 0 ? "expires today" : `in ${reminder.expiresIn} days`})
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-gray-400">Not set</span>
+                    )}
+                  </Fact>
                   <Fact label="User name">
                     {conn.username && (
                       <span className="inline-flex items-center gap-2 break-all">

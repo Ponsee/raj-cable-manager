@@ -61,6 +61,18 @@ export function daysSince(from, to = todayISO()) {
   return Math.round((b - a) / 86400000);
 }
 
+// Date arithmetic on "YYYY-MM-DD" strings (UTC, so no timezone drift).
+export const RECHARGE_VALIDITY_DAYS = 30;
+export const RECHARGE_SOON_DAYS = 5; // "due soon" window before the expiry date
+export function addDays(from, n) {
+  const t = Date.parse(`${String(from ?? "").slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(t)) return "";
+  return new Date(t + n * 86400000).toISOString().slice(0, 10);
+}
+// Default expiry for a recharge date: 30 days counting the recharge day itself,
+// so a recharge on 21 Nov expires on 20 Dec ("" when no date yet).
+export const defaultExpiry = (rechargedOn) => addDays(rechargedOn, RECHARGE_VALIDITY_DAYS - 1);
+
 // ---- Statuses ----
 // A customer's overall status is derived from their lines, never stored.
 export function deriveCustomerStatus(connections = []) {
@@ -96,6 +108,17 @@ export function reminderFor(connection, modems, opts = {}) {
     return { level: "none", days: null };
   if (connection.status !== CONNECTION_STATUS.ACTIVE)
     return { level: "collect_now", days: daysSince(connection.last_recharge_on, today) };
+  // An expiry date wins when it is set: "due" within 5 days of expiry or once expired, "collect" after the
+  // same grace the thresholds give (collect days - due days, 30 by default).
+  if (connection.recharge_expires_on) {
+    const overdue = daysSince(connection.recharge_expires_on, today);
+    const grace = Math.max(0, collectDays - dueDays);
+    const base = { days: daysSince(connection.last_recharge_on, today), expired: overdue > 0, overdue, expiresIn: -overdue || 0 };
+    if (overdue > grace) return { level: "collect", ...base };
+    // "Due soon" = expired already, or expiring within the next few days.
+    if (overdue >= -RECHARGE_SOON_DAYS) return { level: "due", ...base };
+    return { level: "ok", ...base };
+  }
   const days = daysSince(connection.last_recharge_on, today);
   if (days === null) return { level: "notset", days: null };
   if (days > collectDays) return { level: "collect", days };

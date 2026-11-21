@@ -257,7 +257,8 @@ function NoticeBody({ modem, onClose, onSaved }) {
   const last = modem.connection?.last_recharge_on;
   const [text, setText] = useState(
     `Hello ${cust?.name || ""}, your ${modem.connection?.provider?.name || "internet"} connection ` +
-      (last ? `was last recharged on ${formatDate(last)}. ` : "has not been recharged. ") +
+      (last ? `was last recharged on ${formatDate(last)}` : "has not been recharged") +
+      (modem.connection?.recharge_expires_on ? ` and the recharge expired on ${formatDate(modem.connection.recharge_expires_on)}. ` : ". ") +
       "Please recharge soon, or return the modem. Thank you."
   );
   const [date, setDate] = useState(todayISO());

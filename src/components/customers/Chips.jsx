@@ -36,8 +36,8 @@ export function ModemBadge({ badge = "none" }) {
 }
 
 const REMINDERS = {
-  due: { cls: "bg-amber-100 text-amber-700", text: (d) => `Due soon · ${d} days` },
-  collect: { cls: "bg-red-100 text-red-700", text: (d) => `Collect modem · ${d} days` },
+  due: { cls: "bg-amber-100 text-amber-700", text: (d, r) => (r?.expired ? `Recharge expired · ${r.overdue} days ago` : r?.expiresIn != null ? (r.expiresIn === 0 ? "Expires today" : `Expires in ${r.expiresIn} days`) : `Due soon · ${d} days`) },
+  collect: { cls: "bg-red-100 text-red-700", text: (d, r) => (r?.expired ? `Collect modem · expired ${r.overdue} days ago` : `Collect modem · ${d} days`) },
   collect_now: { cls: "bg-red-100 text-red-700", text: () => "Collect modem now" },
   notset: { cls: "bg-gray-100 text-gray-500", text: () => "Recharge date not set" },
 };
@@ -45,7 +45,7 @@ const REMINDERS = {
 export function ReminderChip({ reminder }) {
   const r = reminder && REMINDERS[reminder.level];
   if (!r) return null;
-  return <span className={`${chip} ${r.cls}`}>{r.text(reminder.days)}</span>;
+  return <span className={`${chip} ${r.cls}`}>{r.text(reminder.days, reminder)}</span>;
 }
 
 export function CopyButton({ value, label = "Copy" }) {
