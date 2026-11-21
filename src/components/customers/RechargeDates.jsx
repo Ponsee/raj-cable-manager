@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { defaultExpiry, todayISO } from "../../utils/ftu";
+import { useEffect, useState } from "react";
+import { defaultExpiry, daysSince, todayISO } from "../../utils/ftu";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200";
@@ -7,8 +7,19 @@ const inputClass =
 // Recharge date + expiry date. The expiry follows the recharge date (+30 days)
 // until someone picks it by hand; after that it is left alone.
 export default function RechargeDates({ on, expires, onChange, requireOn = false }) {
-  const [manual, setManual] = useState(!!expires); // an existing expiry counts as chosen
+  // An existing expiry only counts as "chosen by hand" when it is not the usual
+  // 30-day one (29 or 30 days after the recharge), so the date keeps following.
+  const [manual, setManual] = useState(() => {
+    if (!expires) return false;
+    const gap = daysSince(on, expires);
+    return gap !== 29 && gap !== 30;
+  });
   const setOn = (v) => onChange({ on: v, expires: manual ? expires : defaultExpiry(v) });
+  // Old line with a recharge date but no expiry yet: fill it once, on first show.
+  useEffect(() => {
+    if (on && !expires) onChange({ on, expires: defaultExpiry(on) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const setExpires = (v) => {
     setManual(true);
     onChange({ on, expires: v });

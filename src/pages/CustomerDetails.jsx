@@ -254,9 +254,15 @@ export default function CustomerDetails() {
                     {conn.recharge_expires_on ? (
                       <>
                         {formatDate(conn.recharge_expires_on)}
-                        <span className={`ml-1 text-xs ${reminder.expired ? "font-medium text-red-600" : "text-gray-400"}`}>
-                          ({reminder.expired ? `expired ${reminder.overdue} days ago` : reminder.expiresIn === 0 ? "expires today" : `in ${reminder.expiresIn} days`})
-                        </span>
+                        {(() => {
+                          // Own calc: reminders only exist for FTU lines, expiry is shown for every line.
+                          const left = -daysSince(conn.recharge_expires_on);
+                          return (
+                            <span className={`ml-1 text-xs ${left < 0 ? "font-medium text-red-600" : "text-gray-400"}`}>
+                              ({left < 0 ? `expired ${-left} day${left === -1 ? "" : "s"} ago` : left === 0 ? "expires today" : `in ${left} day${left === 1 ? "" : "s"}`})
+                            </span>
+                          );
+                        })()}
                       </>
                     ) : (
                       <span className="text-gray-400">Not set</span>
