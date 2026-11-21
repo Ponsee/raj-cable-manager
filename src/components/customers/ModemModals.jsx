@@ -53,7 +53,8 @@ function AddBody({ onClose, onSaved }) {
   useEffect(() => {
     let alive = true;
     getProducts()
-      .then((p) => alive && setProducts(p))
+      // Modems are Router products, so only those can be picked.
+      .then((p) => alive && setProducts(p.filter((x) => (x.category || "").trim().toLowerCase() === "router")))
       .catch(() => {});
     return () => {
       alive = false;
@@ -85,9 +86,10 @@ function AddBody({ onClose, onSaved }) {
   return (
     <form onSubmit={save} className="space-y-4">
       <Err error={error} />
-      <Field label="Modem product (optional)">
+      <Field label="Modem product (Router category, optional)">
         <select value={productId} onChange={(e) => setProductId(e.target.value)} className={inputClass}>
           <option value="">— Not linked to a product —</option>
+          {products.length === 0 && <option disabled>No products in the Router category</option>}
           {products.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
