@@ -22,6 +22,7 @@ const emptyForm = {
   salary_pay_day: "1",
   phone: "",
   address: "",
+  notes: "",
   ...DEFAULT_PRICING_FORM,
 };
 
@@ -75,6 +76,7 @@ export default function Workers() {
             : null,
         phone: form.phone.trim() || null,
         address: form.address.trim() || null,
+        notes: form.notes?.trim() || null,
       });
       setModalOpen(false);
       setForm(emptyForm);

@@ -12,14 +12,15 @@ import { StatusChip, ModemBadge, ReminderChip, SecretText, CopyButton } from "..
 import { getCustomer, updateCustomer, deleteCustomer } from "../services/customersService";
 import { getProviders } from "../services/providersService";
 import { getFtuSettings } from "../services/settingsService";
+import { getCustomerReturnEvents } from "../services/modemEventsService";
 import { setConnectionStatus, deleteConnection } from "../services/connectionsService";
-import { markReturned } from "../services/modemsService";
+import { ReturnModal } from "../components/customers/ModemModals";
 import { reminderFor, modemOnLine, joinFieldValues, daysSince } from "../utils/ftu";
 import { formatCurrency, formatDate } from "../utils/format";
 import { CONNECTION_STATUS_LABELS } from "../constants";
 
 const fetchAll = (id) =>
-  Promise.all([getCustomer(id), getProviders(), getFtuSettings()]);
+  Promise.all([getCustomer(id), getProviders(), getFtuSettings(), getCustomerReturnEvents(id)]);
 
 const prettyKey = (k) => k.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 
@@ -37,6 +38,7 @@ export default function CustomerDetails() {
   const navigate = useNavigate();
   const [customer, setCustomer] = useState(null);
   const [providers, setProviders] = useState([]);
+  const [events, setEvents] = useState([]); // modems collected back from this customer
   const [settings, setSettings] = useState({ dueDays: 30, collectDays: 60 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -54,9 +56,10 @@ export default function CustomerDetails() {
   const [delConn, setDelConn] = useState(null);
   const [delConnError, setDelConnError] = useState("");
   const [returnAsk, setReturnAsk] = useState(null); // line that went inactive/disconnected with an FTU modem
-  const [busy, setBusy] = useState(false);
+  const [returnModem, setReturnModem] = useState(null); // modem being returned (opens the return form)
 
-  const apply = ([c, p, s]) => {
+  const apply = ([c, p, s, ev]) => {
+    setEvents(ev);
     setCustomer(c);
     setProviders(p);
     setSettings(s);
@@ -87,20 +90,6 @@ export default function CustomerDetails() {
       if (status !== "active" && modem?.ownership === "ftu") setReturnAsk({ conn, modem, status });
     } catch (e) {
       setError(e.message);
-    }
-  };
-
-  const doReturn = async () => {
-    setBusy(true);
-    try {
-      await markReturned(returnAsk.modem.id);
-      setReturnAsk(null);
-      await refresh();
-    } catch (e) {
-      setError(e.message);
-      setReturnAsk(null);
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -320,6 +309,32 @@ export default function CustomerDetails() {
         </div>
       )}
 
+      {/* Modems collected back from this customer */}
+      {events.length > 0 && (
+        <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h4 className="mb-3 text-base font-semibold text-gray-900">Modems collected back</h4>
+          <ul className="divide-y divide-gray-100">
+            {events.map((ev) => (
+              <li key={ev.id} className="flex flex-wrap items-start justify-between gap-2 py-2 text-sm">
+                <div>
+                  <p className="flex items-center gap-2 font-mono text-xs text-gray-800">
+                    {ev.mac_address || ev.modem?.mac_address || <span className="font-sans text-gray-400">No MAC</span>}
+                    <CopyButton value={ev.mac_address || ev.modem?.mac_address} />
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {[ev.modem?.product?.name, ev.provider_name].filter(Boolean).join(" · ") || "Modem"}
+                  </p>
+                  {ev.note && <p className="mt-0.5 text-xs text-gray-600">{ev.note}</p>}
+                </div>
+                <span className="whitespace-nowrap text-xs font-medium text-emerald-700">
+                  Collected {formatDate(ev.occurred_on)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Edit customer */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit Customer">
         {form && (
@@ -372,12 +387,15 @@ export default function CustomerDetails() {
       <ConfirmDialog
         open={!!returnAsk}
         onClose={() => setReturnAsk(null)}
-        onConfirm={doReturn}
-        loading={busy}
+        onConfirm={() => {
+          setReturnModem({ ...returnAsk.modem, connection: { customer, provider: returnAsk.conn.provider } });
+          setReturnAsk(null);
+        }}
         title="FTU modem still with the customer"
-        confirmLabel="Mark returned"
-        message={`The ${returnAsk?.conn.provider?.name} line${returnAsk?.conn.username ? ` (${returnAsk.conn.username})` : ""} is now ${returnAsk ? CONNECTION_STATUS_LABELS[returnAsk.status] : ""}. Has the FTU modem been collected? "Mark returned" puts it back in stock; choose Cancel to collect it later.`}
+        confirmLabel="Yes, collected"
+        message={`The ${returnAsk?.conn.provider?.name} line${returnAsk?.conn.username ? ` (${returnAsk.conn.username})` : ""} is now ${returnAsk ? CONNECTION_STATUS_LABELS[returnAsk.status] : ""}. Has the FTU modem been collected? "Yes, collected" asks for the product, MAC, date and notes and puts it back in stock; choose Cancel to collect it later.`}
       />
+      <ReturnModal open={!!returnModem} onClose={() => setReturnModem(null)} modem={returnModem} onSaved={refresh} />
     </div>
   );
 }

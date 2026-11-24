@@ -6,6 +6,7 @@ import { throwDb } from "./dbErrors";
 import { addStockTransaction } from "./productsService";
 import { getTrackedIds, takeUnitsOut, revertOutByTx } from "./modemStockService";
 import { issueModem, markReturned, createModem } from "./modemsService";
+import { logReturn } from "./modemEventsService";
 import { STOCK_TYPES, MODEM_OWNERSHIP, MODEM_STATUS } from "../constants";
 import { todayISO } from "../utils/ftu";
 
@@ -93,22 +94,54 @@ export async function undoIssueUnit(unit, result) {
 }
 
 // An FTU modem was collected: back to stock (+1 for tracked products).
-export async function returnUnitToStock(modem) {
-  const tracked = modem.product_id ? await getTrackedIds([modem.product_id]) : new Set();
-  if (!tracked.has(modem.product_id)) return markReturned(modem.id);
+//
+// Called with no options (repair flows) it only touches stock for tracked products.
+// Called from the Returned form ({ productId, mac, date, note }) the chosen product
+// ALWAYS gets +1 stock, the unit is assigned to that product / MAC, and the date and
+// note go on the stock entry.
+export async function returnUnitToStock(modem, opts = {}) {
+  const manual = !!opts.productId;
+  const productId = opts.productId || modem.product_id || null;
+  const tracked = productId ? await getTrackedIds([productId]) : new Set();
+  const extra = manual
+    ? { product_id: productId, ...(opts.mac !== undefined ? { mac_address: opts.mac } : {}) }
+    : {};
+  if (!manual && !tracked.has(productId)) return markReturned(modem.id);
 
-  const { error: e1 } = await supabase.from("stock_transactions").insert([
-    {
-      product_id: modem.product_id,
-      type: STOCK_TYPES.RETURN,
-      quantity: 1,
-      price_per_unit: 0,
-      total_amount: 0,
-      note: "Free-to-use modem collected",
-    },
-  ]);
+  const customer = modem.connection?.customer?.name;
+  const note = [
+    "Free-to-use modem collected",
+    customer && `from ${customer}`,
+    opts.mac && `MAC ${opts.mac}`,
+    opts.note?.trim(),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const { data, error: e1 } = await supabase
+    .from("stock_transactions")
+    .insert([
+      {
+        product_id: productId,
+        type: STOCK_TYPES.RETURN,
+        quantity: 1,
+        price_per_unit: 0,
+        total_amount: 0,
+        note,
+        ...(opts.date ? { created_at: stamp(opts.date) } : {}),
+      },
+    ])
+    .select("id")
+    .single();
   throwDb(e1);
-  return markReturned(modem.id);
+  try {
+    await markReturned(modem.id, extra);
+    if (manual) await logReturn(modem, { date: opts.date, note: opts.note, mac: opts.mac });
+    return;
+  } catch (err) {
+    // The unit could not be updated (e.g. MAC already used): take the stock entry back out.
+    await supabase.from("stock_transactions").delete().eq("id", data.id);
+    throw err;
+  }
 }
 
 // "+ Add modem" on the Modems page. A tracked product is a real stock-in (an

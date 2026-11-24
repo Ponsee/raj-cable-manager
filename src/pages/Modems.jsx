@@ -5,9 +5,9 @@ import Button from "../components/ui/Button";
 import StatCard from "../components/ui/StatCard";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { StatusChip, ReminderChip, CopyButton } from "../components/customers/Chips";
-import { AddModemModal, IssueModal, NoticeModal, LostModal, EditModemModal } from "../components/customers/ModemModals";
+import { AddModemModal, IssueModal, NoticeModal, LostModal, EditModemModal, ReturnModal } from "../components/customers/ModemModals";
 import { getModems, deleteModem } from "../services/modemsService";
-import { returnUnitToStock } from "../services/modemFlowService";
+import { getReturnEvents } from "../services/modemEventsService";
 import { SendToServiceModal, ServiceResultModal, ServiceDetailsModal } from "../components/customers/ServiceModals";
 import { SERVICE_OUTCOME_LABELS } from "../utils/modemService";
 import { getFtuSettings } from "../services/settingsService";
@@ -29,12 +29,13 @@ const VIEWS = {
   with_service: "With service",
   out: "Sold / used",
   lost: "Lost",
+  collected: "Collected (returned)",
 };
 
 // Worst reminder first, so what needs action is at the top.
 const SEVERITY = { collect_now: 4, collect: 3, due: 2, notset: 1 };
 
-const fetchAll = () => Promise.all([getModems(), getFtuSettings()]);
+const fetchAll = () => Promise.all([getModems(), getFtuSettings(), getReturnEvents()]);
 
 export default function Modems() {
   const { role } = useAuth();
@@ -42,6 +43,7 @@ export default function Modems() {
   const location = useLocation();
   const [modems, setModems] = useState([]);
   const [settings, setSettings] = useState({ dueDays: 30, collectDays: 60 });
+  const [events, setEvents] = useState([]); // collected (returned) history
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -63,9 +65,10 @@ export default function Modems() {
   const [busy, setBusy] = useState(false);
   const [askError, setAskError] = useState("");
 
-  const apply = ([m, s]) => {
+  const apply = ([m, s, ev]) => {
     setModems(m);
     setSettings(s);
+    setEvents(ev);
     setError("");
   };
   const refresh = () =>
@@ -144,7 +147,15 @@ export default function Modems() {
     { key: "collect", label: "Collect now", icon: "🚨", accent: "red", n: count((r) => level(r) === "collect" || level(r) === "collect_now") },
     { key: "notset", label: "Not set", icon: "❔", accent: "purple", n: count((r) => level(r) === "notset") },
     { key: "with_service", label: "With service", icon: "🔧", accent: "orange", n: count((r) => r.status === "with_service") },
+    { key: "collected", label: "Collected", icon: "✅", accent: "green", n: events.length },
   ];
+
+  const shownEvents = events.filter((ev) => {
+    if (!q) return true;
+    const hay = [ev.customer_name, ev.customer_phone, ev.provider_name, ev.mac_address, ev.modem?.serial_no, ev.modem?.product?.name, ev.note]
+      .filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(q);
+  });
 
   return (
     <div>
@@ -156,7 +167,7 @@ export default function Modems() {
 
       {error && <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-7">
         {cards.map((c) => (
           <StatCard key={c.key} label={c.label} value={c.n} icon={c.icon} accent={c.accent}
             onClick={() => setView(view === c.key ? "all" : c.key)} />
@@ -177,6 +188,58 @@ export default function Modems() {
         </select>
       </div>
 
+      {view === "collected" ? (
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          {shownEvents.length === 0 ? (
+            <p className="p-8 text-center text-gray-400">
+              {events.length === 0
+                ? 'No collected modems recorded yet. They appear here when you press "Returned" on a modem.'
+                : "No collected modems match the search."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3">Collected on</th>
+                    <th className="px-4 py-3">Customer / line</th>
+                    <th className="px-4 py-3">Modem</th>
+                    <th className="px-4 py-3">Now</th>
+                    <th className="px-4 py-3">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {shownEvents.map((ev) => (
+                    <tr key={ev.id} className="align-top">
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-700">{formatDate(ev.occurred_on)}</td>
+                      <td className="px-4 py-3">
+                        {ev.customer_id ? (
+                          <Link to={`/customers/${ev.customer_id}`} className="font-medium text-indigo-700 hover:underline">{ev.customer_name}</Link>
+                        ) : (
+                          <span className="font-medium">{ev.customer_name || "—"}</span>
+                        )}
+                        <p className="text-xs text-gray-500">{ev.customer_phone || "No phone"}</p>
+                        {ev.provider_name && <p className="text-xs text-gray-600">{ev.provider_name}</p>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="flex items-center gap-2 font-mono text-xs">
+                          {ev.mac_address || ev.modem?.mac_address || <span className="font-sans text-gray-400">No MAC</span>}
+                          <CopyButton value={ev.mac_address || ev.modem?.mac_address} />
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {[ev.modem?.product?.name, ev.modem?.serial_no && `S/N ${ev.modem.serial_no}`].filter(Boolean).join(" · ") || "No product / serial"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{ev.modem ? (VIEWS[ev.modem.status] || ev.modem.status) : "—"}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{ev.note || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         {loading ? (
           <p className="p-8 text-center text-gray-400">Loading modems...</p>
@@ -311,6 +374,7 @@ export default function Modems() {
           </div>
         )}
       </div>
+      )}
 
       <AddModemModal open={addOpen} onClose={() => setAddOpen(false)} onSaved={refresh} />
       <IssueModal open={!!issue} onClose={() => setIssue(null)} modem={issue} onSaved={refresh} />
@@ -321,16 +385,7 @@ export default function Modems() {
       <ServiceDetailsModal open={!!detailsModem} onClose={() => setDetailsModem(null)} modem={detailsModem} isAdmin={isAdmin} onSaved={refresh} />
       <EditModemModal open={!!edit} onClose={() => setEdit(null)} modem={edit} onSaved={refresh} />
 
-      <ConfirmDialog
-        open={!!returnAsk}
-        onClose={() => setReturnAsk(null)}
-        onConfirm={() => run(() => returnUnitToStock(returnAsk), () => setReturnAsk(null))}
-        loading={busy}
-        error={askError}
-        title="Modem collected?"
-        confirmLabel="Mark returned"
-        message={`The modem goes back to stock and is taken off ${returnAsk?.connection?.customer?.name || "the customer"}'s ${returnAsk?.connection?.provider?.name || ""} line.`}
-      />
+      <ReturnModal open={!!returnAsk} onClose={() => setReturnAsk(null)} modem={returnAsk} onSaved={refresh} />
       <ConfirmDialog
         open={!!delAsk}
         onClose={() => setDelAsk(null)}
