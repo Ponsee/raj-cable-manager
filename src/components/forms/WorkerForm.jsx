@@ -241,6 +241,19 @@ export default function WorkerForm({ form, onChange, showActive = false }) {
             placeholder="Optional"
           />
         </div>
+        <div className="sm:col-span-2">
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            Notes
+          </label>
+          <textarea
+            name="notes"
+            rows={2}
+            value={form.notes || ""}
+            onChange={onChange}
+            className={inputClass}
+            placeholder="Optional — anything worth remembering about this worker"
+          />
+        </div>
       </div>
 
       {showActive && (

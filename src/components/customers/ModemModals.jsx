@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import Modal from "../ui/Modal";
 import Button from "../ui/Button";
 import { markLost, markNoticeSent, updateModem } from "../../services/modemsService";
-import { issueUnit, addModemToStock } from "../../services/modemFlowService";
+import { issueUnit, addModemToStock, returnUnitToStock } from "../../services/modemFlowService";
 import { getCustomers } from "../../services/customersService";
 import { getProducts } from "../../services/productsService";
 import { addPending } from "../../services/pendingService";
@@ -361,6 +361,107 @@ function LostBody({ modem, onClose, onSaved }) {
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
         <Button type="submit" variant="danger" loading={saving}>{saving ? "Saving..." : "Mark lost"}</Button>
+      </div>
+    </form>
+  );
+}
+
+// ---------- Returned: an FTU modem was collected back ----------
+export function ReturnModal({ open, onClose, modem, onSaved }) {
+  return (
+    <Modal open={open} onClose={onClose} title="Modem collected">
+      {open && modem && <ReturnBody modem={modem} onClose={onClose} onSaved={onSaved} />}
+    </Modal>
+  );
+}
+
+function ReturnBody({ modem, onClose, onSaved }) {
+  const cust = modem.connection?.customer;
+  const [products, setProducts] = useState([]);
+  const [loadingP, setLoadingP] = useState(true);
+  const [productId, setProductId] = useState(modem.product_id || "");
+  const [mac, setMac] = useState(modem.mac_address || "");
+  const [date, setDate] = useState(todayISO());
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    getProducts()
+      .then((p) => alive && setProducts(p.filter((x) => (x.category || "").trim().toLowerCase() === "router")))
+      .catch(() => {})
+      .finally(() => alive && setLoadingP(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const changed = modem.product_id && productId && productId !== modem.product_id;
+
+  const save = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!productId) return setError("Pick the product this modem goes back to.");
+    if (!date) return setError("Pick the date it was collected.");
+    const m = normalizeMac(mac);
+    if (m === null) return setError("Enter a valid MAC address (e.g. AA:BB:CC:DD:EE:FF).");
+    setSaving(true);
+    try {
+      await returnUnitToStock(modem, { productId, mac: m, date, note });
+      await onSaved();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={save} className="space-y-4">
+      <Err error={error} />
+      <p className="text-sm text-gray-600">
+        Collected from <b>{cust?.name || "the customer"}</b>
+        {modem.connection?.provider?.name ? ` (${modem.connection.provider.name} line)` : ""}. The modem goes back to
+        stock and is taken off the line. No income or expense is recorded.
+      </p>
+      <Field label="MAC address">
+        <input value={mac} onChange={(e) => setMac(e.target.value)} className={inputClass + " font-mono"} placeholder="AA:BB:CC:DD:EE:FF" />
+      </Field>
+      <Field label="Back to stock of (product)">
+        <select value={productId} onChange={(e) => setProductId(e.target.value)} className={inputClass} disabled={loadingP}>
+          <option value="">{modem.product_id ? "— Pick a product —" : "— Pick the product for this MAC —"}</option>
+          {!loadingP && products.length === 0 && <option disabled>No products in the Router category</option>}
+          {products.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {p.subcategory ? ` (${p.subcategory})` : ""}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-gray-400">
+          {modem.product_id
+            ? "Pre-filled from this modem's record. Change it only if it is a different model."
+            : "This modem has no product yet, so the MAC will be assigned to the product you pick."}
+        </p>
+        {changed && (
+          <p className="mt-1 text-xs text-amber-700">
+            Different from the product it was issued from. Stock of the old product stays as it is.
+          </p>
+        )}
+      </Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Collected on">
+          <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Notes (optional)">
+          <input value={note} onChange={(e) => setNote(e.target.value)} className={inputClass} placeholder="e.g. condition, who brought it" />
+        </Field>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={saving}>{saving ? "Saving..." : "Mark returned"}</Button>
       </div>
     </form>
   );

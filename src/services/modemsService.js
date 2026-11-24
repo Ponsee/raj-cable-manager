@@ -125,7 +125,8 @@ export async function markNoticeSent(id, date = todayISO()) {
 }
 
 // Collected back: the unit returns to stock and leaves the line.
-export async function markReturned(id) {
+// `extra` can set the unit's product / MAC at the same time ({ product_id, mac_address }).
+export async function markReturned(id, extra = {}) {
   const { error } = await supabase
     .from("modems")
     .update({
@@ -133,6 +134,7 @@ export async function markReturned(id) {
       connection_id: null,
       issued_on: null,
       notice_sent_on: null,
+      ...identity(extra),
     })
     .eq("id", id);
   throwDb(error);

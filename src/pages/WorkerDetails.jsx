@@ -265,6 +265,7 @@ export default function WorkerDetails() {
           <dl className="space-y-2 text-sm">
             <Row label="Phone" value={worker.phone || "-"} />
             <Row label="Address" value={worker.address || "-"} />
+            <Row label="Notes" value={worker.notes || "-"} />
             {isSalary && (
               <Row
                 label="Monthly salary"
@@ -581,7 +582,7 @@ function Row({ label, value }) {
   return (
     <div className="flex justify-between gap-4">
       <dt className="text-gray-500">{label}</dt>
-      <dd className="text-right font-medium text-gray-800">{value}</dd>
+      <dd className="whitespace-pre-line break-words text-right font-medium text-gray-800">{value}</dd>
     </div>
   );
 }
@@ -1316,6 +1317,7 @@ function EditWorkerModal({ open, onClose, worker, onSaved }) {
     salary_pay_day: "1",
     phone: "",
     address: "",
+    notes: "",
     ...DEFAULT_PRICING_FORM,
   });
   const [saving, setSaving] = useState(false);
@@ -1333,6 +1335,7 @@ function EditWorkerModal({ open, onClose, worker, onSaved }) {
           : "1",
         phone: worker.phone || "",
         address: worker.address || "",
+        notes: worker.notes || "",
         ...pricingToFormFields(worker.pricing),
       });
     }
@@ -1367,6 +1370,7 @@ function EditWorkerModal({ open, onClose, worker, onSaved }) {
             : null,
         phone: form.phone.trim() || null,
         address: form.address.trim() || null,
+        notes: form.notes?.trim() || null,
       });
       await onSaved();
     } catch (e) {
